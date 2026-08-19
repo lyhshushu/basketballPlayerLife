@@ -3,7 +3,7 @@ import {
   APP_TITLE, TAGLINE, MODES, POSITIONS, COUNTRIES, LEAGUES, TEAMS, NCAA_TEAMS, TITLES, UPDATES,
 } from './data.js';
 import * as E from './engine.js';
-import { ATTR_LIST, POS_ZH, loadPool, poolTeamCount, randomTeam, drawPlayers, posPenalty, srcPosKey, calcOVR, nextUnlocked, lockAttr, reveal, createBuildState, buildProgress } from './build.js';
+import { ATTR_LIST, POS_ZH, loadPool, poolTeamCount, randomTeam, drawPlayers, posPenalty, srcPosKey, calcOVR, nextUnlocked, lockAttr, reveal, createBuildState, buildProgress, rollAttrPool } from './build.js';
 import { makeRoster, simulateGame, virtualPlayer, mainPos } from './simEngine.js';
 
 const root = document.getElementById('root');
@@ -1063,9 +1063,14 @@ function buildHTML() {
         </button>`).join('')
     : '<div class="empty">点击下方按钮随机抽一支球队</div>';
 
-  const lockedList = ATTR_LIST.map(({ key, zh, icon }) => {
+  // 已锁定属性（始终显示）+ 当前池 5 个可选项
+  const pool = b.currentPool && b.currentPool.length ? b.currentPool : [];
+  const shownKeys = [...b.lockedOrder, ...pool.filter(k => !b.attrs[k])];
+  const lockedList = shownKeys.map((key) => {
+    const meta = ATTR_LIST.find(a => a.key === key);
+    if (!meta) return '';
+    const { zh, icon } = meta;
     const l = b.attrs[key];
-    // 选中球员后：未锁定属性槽显示该球员该属性的预览值（带跨位置衰减）
     let preview = null;
     let clickable = false;
     if (!l && selected) {
@@ -1080,11 +1085,11 @@ function buildHTML() {
     </div>`;
   }).join('');
 
-  // 按钮状态
+  // 按钮状态：换卡随时可点（剩余次数>0）
   const spinBtn = hasTeam
     ? `<button class="btn btn-block btn-disabled" disabled>🎲 本队已锁定，先选球员锁定属性</button>`
     : `<button class="btn btn-primary btn-block" onclick="BL.spinTeam()">🎲 随机球队</button>`;
-  const rerollBtn = hasTeam && !selected && b.rerollsLeft > 0
+  const rerollBtn = hasTeam && b.rerollsLeft > 0
     ? `<button class="btn btn-outline btn-block" onclick="BL.rerollPlayers()">换 5 张球员卡（剩 ${b.rerollsLeft}）</button>`
     : '';
 
@@ -1095,7 +1100,7 @@ function buildHTML() {
     </div>
     <div class="scroll">
       <div class="build-progress"><div class="bp-bar" style="width:${pct}%"></div><span class="bp-txt">${b.step}/${ATTR_LIST.length}</span></div>
-      <div class="label">第 ${b.step + 1}/${ATTR_LIST.length} 步 · ${selected ? `已选中 ${esc(selected.cname || selected.name)}，点下方任一属性锁定` : (hasTeam ? '在下方球员卡中选一人' : '抽球队、选球员')}</div>
+      <div class="label">第 ${b.step + 1}/${ATTR_LIST.length} 步 · ${selected ? `已选中 ${esc(selected.cname || selected.name)}，从下方 5 项中锁 1 项` : (hasTeam ? '在下方球员卡中选一人' : '抽球队、选球员')}</div>
 
       <div class="attr-lock-grid">${lockedList}</div>
 
@@ -1108,7 +1113,7 @@ function buildHTML() {
         ${spinBtn}
         ${rerollBtn}
       </div>
-      <div class="build-hint">抽到球队后不可再换队，只能换球员卡；选中球员并锁定一项属性后，自动进入下一支球队。</div>
+      <div class="build-hint">每支球队随机亮出 5 项属性，选中球员后从这 5 项中锁定 1 项；锁定后自动换下一队。换球员卡可随时进行（共 6 次）。</div>
       <div style="height:24px"></div>
     </div>
   `);
@@ -1602,16 +1607,17 @@ window.BL = {
     b.currentTeam = randomTeam();
     b.drawn = drawPlayers(b.currentTeam, 5);
     b.selectedPlayer = null;
+    rollAttrPool(b);
     render();
   },
   rerollPlayers() {
     const b = app.build;
     if (!b || !b.currentTeam) { toast('先抽取一支球队'); return; }
-    if (b.selectedPlayer) { toast('已选中球员，先锁定属性'); return; }
     if (b.rerollsLeft <= 0) { toast('换人次数用完了'); return; }
     b.rerollsLeft -= 1;
     b.drawn = drawPlayers(b.currentTeam, 5);
     b.selectedPlayer = null;
+    rollAttrPool(b);
     render();
   },
   pickBuildPlayer(i) {

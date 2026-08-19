@@ -141,9 +141,19 @@ export function createBuildState(userPos) {
     currentTeam: null,
     drawn: [],
     selectedPlayer: null,
-    rerollsLeft: 3,
+    rerollsLeft: 6,
     usedTeams: [],
+    currentPool: [],    // 本次可选的属性池（从13个中随机抽5个，未锁定的）
   };
+}
+
+// 从未锁定的属性中随机抽 5 个作为本次可选池（剩余不足5个则全取）
+export function rollAttrPool(state) {
+  const locked = new Set(state.lockedOrder);
+  const available = ATTR_LIST.filter(a => !locked.has(a.key)).map(a => a.key);
+  const shuffled = available.slice().sort(() => Math.random() - 0.5);
+  state.currentPool = shuffled.slice(0, 5);
+  return state.currentPool;
 }
 
 export function buildProgress(state) {
@@ -167,6 +177,7 @@ export function lockAttr(state, attrKey) {
   state.selectedPlayer = null;
   state.drawn = [];
   state.currentTeam = null;
+  state.currentPool = [];
   return state.attrs[attrKey];
 }
 
