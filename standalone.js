@@ -3076,6 +3076,8 @@ function finishSeason(state) {
     resultZh: resultZh(result && result.league, LEAGUES[plan.leagueId]),
     awards: fullAwards,
     awardsDetail: fullAwards,
+    leagueAwards: generateLeagueAwards(state),
+    nbaJump: nbaJumpInfo(state),
     highlight,
     growthPoints,
     growthBank: state.player.growthBank,
@@ -3157,6 +3159,204 @@ function computeSeasonAwards(state, season, avg, result, base) {
 // 职业赛季完整结束（进季后赛流程后调用）：finishSeason + 清空季后赛，返回 snapshot 供结算
 function finishCareerSeason(state, team, age, modifiers) {
   return finishSeason(state);
+}
+
+// 生成完整奖项名单：从联盟各队 roster 评选出每个奖项的获奖者（含能力值/数据），我参与竞争
+function generateLeagueAwards(state) {
+  const season = state.season;
+  if (!season) return [];
+  const myTeamId = season.teamId;
+  const teamTable = season.kind === 'ncaa' ? NCAA_TEAMS : TEAMS;
+  const myAvg = season.myStats.g > 0 ? {
+    pts: season.myStats.pts / season.myStats.g,
+    reb: season.myStats.reb / season.myStats.g,
+    ast: season.myStats.ast / season.myStats.g,
+    stl: season.myStats.stl / season.myStats.g,
+    blk: season.myStats.blk / season.myStats.g,
+  } : { pts: 0, reb: 0, ast: 0, stl: 0, blk: 0 };
+  const winPct = season.totalGames > 0 ? season.wins / season.totalGames : 0;
+
+  // 收集联盟球员池：各队 roster 中打过比赛的球员（每队最多 5 人）
+  const pool = [];
+  const usedNames = new Set();
+  for (const [tid, roster] of season.rosters) {
+    if (!roster) continue;
+    const teamPlayers = [];
+    roster.forEach(p => {
+      if (p.isMe) return;
+      const gp = p.g || 1;
+      const avg = {
+        pts: p.pts / gp,
+        reb: p.reb / gp,
+        ast: p.ast / gp,
+        stl: p.stl / gp,
+        blk: p.blk / gp,
+      };
+      teamPlayers.push({ name: p.name, pos: p.pos, ovr: p.ovr, teamId: tid, avg, g: p.g });
+    });
+    // 每队取 OVR 最高的 5 人
+    teamPlayers.sort((a, b) => b.ovr - a.ovr).slice(0, 5).forEach(p => { pool.push(p); usedNames.add(p.name); });
+  }
+  // 补足到 60 人：生成虚拟联盟明星（能力分布广，名字用各国姓氏）
+  const allSurnames = [];
+  Object.values(COUNTRIES).forEach(c => { (c.surnames || []).forEach(s => allSurnames.push(s)); });
+  const posArr = ['PG', 'SG', 'SF', 'PF', 'C'];
+  // 先造 6 个全明星级大牌（OVR 88-96，数据亮眼）
+  const starNames = ['亚历克斯·王', '乔丹·李', '科比·张', '詹姆斯·陈', '杜兰特·刘', '库里·杨'];
+  const starPos = ['SG', 'PG', 'SF', 'PF', 'C', 'PG'];
+  for (let i = 0; i < starNames.length; i++) {
+    const ovr = 88 + Math.floor(Math.random() * 9);
+    const pos = starPos[i];
+    const posBias = POS_ATTR_BIAS[pos] || {};
+    pool.push({
+      name: starNames[i], pos, ovr, teamId: null, g: 60 + Math.floor(Math.random() * 15),
+      avg: {
+        pts: ovr * 0.42 + (posBias.FIN || 0) * 0.5 + Math.random() * 4,
+        reb: ovr * 0.14 + (posBias.REB || 0) * 0.6 + Math.random() * 2,
+        ast: ovr * 0.1 + (posBias.PAS || 0) * 0.7 + Math.random() * 3,
+        stl: 1 + Math.random() * 1.4,
+        blk: 0.4 + (['PF', 'C'].includes(pos) ? Math.random() * 1.8 : Math.random() * 0.6),
+      },
+    });
+  }
+  let guard2 = 0;
+  while (pool.length < 60 && guard2 < 200) {
+    guard2++;
+    const surname = allSurnames[Math.floor(Math.random() * allSurnames.length)] || '球员';
+    const name = surname + '·' + (1 + Math.floor(Math.random() * 99));
+    if (usedNames.has(name)) continue;
+    usedNames.add(name);
+    const ovr = 60 + Math.floor(Math.random() * 36); // 60-95
+    const pos = posArr[Math.floor(Math.random() * 5)];
+    const posBias = POS_ATTR_BIAS[pos] || {};
+    const ptsBase = ovr * 0.28 + (posBias.FIN || 0) * 0.4;
+    const rebBase = ovr * 0.12 + (posBias.REB || 0) * 0.6;
+    const astBase = ovr * 0.08 + (posBias.PAS || 0) * 0.7;
+    const avg = {
+      pts: ptsBase + Math.random() * 5,
+      reb: rebBase + Math.random() * 3,
+      ast: astBase + Math.random() * 3,
+      stl: 0.4 + Math.random() * 1.6,
+      blk: 0.3 + (['PF', 'C'].includes(pos) ? Math.random() * 2 : Math.random() * 0.8),
+    };
+    pool.push({ name, pos, ovr, teamId: null, avg, g: 55 + Math.floor(Math.random() * 20) });
+  }
+
+  // 我的球员加入竞争
+  const me = {
+    name: state.player.name, pos: POSITIONS[state.player.position].en, ovr: state.player.overall,
+    teamId: myTeamId, avg: myAvg, g: season.myStats.g, isMe: true,
+  };
+
+  const pickBest = (arr, key) => {
+    if (!arr.length) return null;
+    return arr.sort((a, b) => b[key] - a[key])[0];
+  };
+  const makeLine = (p) => ({
+    name: p.name, pos: p.pos, ovr: p.ovr, isMe: p.isMe,
+    teamId: p.teamId, g: p.g,
+    pts: p.avg.pts.toFixed(1), reb: p.avg.reb.toFixed(1), ast: p.avg.ast.toFixed(1),
+    stl: p.avg.stl.toFixed(1), blk: p.avg.blk.toFixed(1),
+  });
+
+  const candidates = [...pool, me];
+  const awards = [];
+  const alreadyWon = new Set();
+
+  // 数据王（取最高，一个球员最多拿一个数据王，含我）
+  const statKings = [
+    { key: 'scoring_title', zh: '得分王', get: p => p.avg.pts, min: 20 },
+    { key: 'rebound_title', zh: '篮板王', get: p => p.avg.reb, min: 8 },
+    { key: 'assist_title', zh: '助攻王', get: p => p.avg.ast, min: 6 },
+    { key: 'steal_title', zh: '抢断王', get: p => p.avg.stl, min: 1.5 },
+    { key: 'block_title', zh: '盖帽王', get: p => p.avg.blk, min: 1.2 },
+  ];
+  for (const sk of statKings) {
+    const elig = candidates.filter(p => p.g >= 30 && !alreadyWon.has(p.name));
+    if (!elig.length) continue;
+    const best = elig.slice().sort((a, b) => sk.get(b) - sk.get(a))[0];
+    if (best && sk.get(best) >= sk.min) {
+      awards.push({ key: sk.key, zh: sk.zh, winner: makeLine(best) });
+      alreadyWon.add(best.name);
+    }
+  }
+
+  // MVP：综合数据 + 战绩
+  const mvpScore = (p) => p.avg.pts + p.avg.reb * 0.7 + p.avg.ast * 0.7 + p.avg.stl + p.avg.blk + p.ovr * 0.15 + (p.isMe ? winPct * 40 : 20);
+  const mvp = candidates.slice().sort((a, b) => mvpScore(b) - mvpScore(a))[0];
+  awards.push({ key: 'mvp', zh: '常规赛MVP', winner: makeLine(mvp) });
+
+  // 最佳阵容 1/2/3 阵（按综合得分取前 15，分三阵）
+  const allNbaScore = (p) => p.avg.pts + p.avg.reb * 0.8 + p.avg.ast * 0.8 + p.avg.stl * 1.2 + p.avg.blk * 1.2 + p.ovr * 0.2;
+  const ranked = candidates.slice().sort((a, b) => allNbaScore(b) - allNbaScore(a)).slice(0, 15);
+  const teamNames = ['最佳阵容一阵', '最佳阵容二阵', '最佳阵容三阵'];
+  const teamKeys = ['all_nba_1', 'all_nba_2', 'all_nba_3'];
+  for (let i = 0; i < 3 && ranked.length >= (i + 1) * 5; i++) {
+    const five = ranked.slice(i * 5, (i + 1) * 5);
+    awards.push({ key: teamKeys[i], zh: teamNames[i], team: five.map(makeLine) });
+  }
+
+  // 最佳防守阵容（按防守数据）
+  const defScore = (p) => p.avg.stl + p.avg.blk + p.ovr * 0.05;
+  const defRanked = candidates.slice().sort((a, b) => defScore(b) - defScore(a)).slice(0, 10);
+  awards.push({ key: 'all_def_1', zh: '最佳防守一阵', team: defRanked.slice(0, 5).map(makeLine) });
+  awards.push({ key: 'all_def_2', zh: '最佳防守二阵', team: defRanked.slice(5, 10).map(makeLine) });
+
+  // DPOY
+  const dpoy = candidates.slice().sort((a, b) => (b.avg.stl + b.avg.blk) - (a.avg.stl + a.avg.blk))[0];
+  awards.push({ key: 'dpoy', zh: '最佳防守球员', winner: makeLine(dpoy) });
+
+  // 最佳新秀（生涯第一季的我，或其他低龄球员）
+  const isRookie = (state.seasons || []).filter(s => !s.youth && s.teamId).length <= 1;
+  if (isRookie) {
+    awards.push({ key: 'roty', zh: '最佳新秀', winner: makeLine(me) });
+  } else {
+    const rookiePool = candidates.filter(p => !p.isMe);
+    awards.push({ key: 'roty', zh: '最佳新秀', winner: makeLine(pickBest(rookiePool, p => p.ovr)) });
+  }
+
+  // 最佳第六人 / 进步最快 / FMVP（赛季结果相关）
+  const champion = state.lastSeasonSummary && state.lastSeasonSummary.result && state.lastSeasonSummary.result.league === 'champion';
+  if (season.kind === 'pro' && champion) {
+    const fmvp = pickBest([...candidates].filter(p => p.isMe || p.ovr >= 85), p => p.avg.pts);
+    awards.push({ key: 'fmvp', zh: '总决赛MVP', winner: makeLine(fmvp) });
+  }
+
+  return awards;
+}
+
+// 冲击 NBA：赛季结束后不在 NBA 时可用，按能力判定成功率
+function nbaJumpInfo(state) {
+  const team = state.currentTeamId ? TEAMS[state.currentTeamId] : null;
+  if (!team || team.league === 'nba') return { available: false };
+  const ovr = state.player.overall;
+  // 能力越高成功率越高
+  let p = clamp((ovr - 78) * 0.022, 0.06, 0.85);
+  return { available: true, chance: p, pct: Math.round(p * 100) };
+}
+
+function tryNBAJump(state) {
+  const info = nbaJumpInfo(state);
+  if (!info.available) return { ok: false, reason: '你已在 NBA' };
+  const rng = mulberry32(state.rngState);
+  const success = rng() < info.chance;
+  state.rngState = (rng() * 4294967296) >>> 0 || 12345;
+  if (success) {
+    const nbaTeams = Object.values(TEAMS).filter(t => t.league === 'nba').sort((a, b) => a.strength - b.strength);
+    const team = nbaTeams[Math.floor(rng() * nbaTeams.length)];
+    const from = TEAMS[state.currentTeamId];
+    state.transfers.push({ age: state.player.age, from: from ? from.id : null, to: team.id });
+    state.currentTeamId = team.id;
+    state.contractTeamId = team.id;
+    state.stage = 'pro';
+    state.player.contract = makeContract(state.player, team, LEAGUES.nba);
+    state.legacyLines.push(`你凭一己之力打进了 NBA，加盟${team.zh}。`);
+    state.lastEventOutcome = { eventKey: 'nba_jump', optionKey: 'jump', text: `冲击成功！你得到了 ${team.zh} 的合同，正式登陆 NBA。`, kind: 'positive' };
+    return { ok: true, team, contract: state.player.contract };
+  } else {
+    state.lastEventOutcome = { eventKey: 'nba_jump', optionKey: 'jump', text: '冲击 NBA 失败，各队暂时没有你的位置。继续在联赛里证明自己吧。', kind: 'negative' };
+    return { ok: false, reason: 'chance_failed' };
+  }
 }
 
 function develop(player, age, rng) {
@@ -4416,7 +4616,7 @@ function galleryState() {
   }
   return { unlocked, total: TITLES.length };
 }
-  __M['engine.js'] = { xmur3, mulberry32, nextRng, roll, chance, pickWeighted, genSeed, fmtMoney, fmtInt, fmtAvg, percentileOf, clamp, teamById, leagueById, countryById, ROLE_KEYS, roleName, roleFactor, tournamentSchedule, newGame, marketValueOf, salaryOf, nbaSalaryOf, makeContract, renewContract, upgradeAttr, recalcOverall, beginSeason, simNextGames, beginPlayoffs, simPlayoffGames, getMyRoster, finishSeason, step, decide, makeGameContext, applyGameResult, maxOverall, peakSeason, teamById2, clubsOf, trophyCounts, trophyZh, awardZh, tournamentZh, resultZh, computeTitles, nationalLine, finalize, buildSummary, isLight, endingZh, saveState, loadState, clearState, saveArchive, loadArchive, galleryState };
+  __M['engine.js'] = { xmur3, mulberry32, nextRng, roll, chance, pickWeighted, genSeed, fmtMoney, fmtInt, fmtAvg, percentileOf, clamp, teamById, leagueById, countryById, ROLE_KEYS, roleName, roleFactor, tournamentSchedule, newGame, marketValueOf, salaryOf, nbaSalaryOf, makeContract, renewContract, upgradeAttr, recalcOverall, beginSeason, simNextGames, beginPlayoffs, simPlayoffGames, getMyRoster, finishSeason, generateLeagueAwards, nbaJumpInfo, tryNBAJump, step, decide, makeGameContext, applyGameResult, maxOverall, peakSeason, teamById2, clubsOf, trophyCounts, trophyZh, awardZh, tournamentZh, resultZh, computeTitles, nationalLine, finalize, buildSummary, isLight, endingZh, saveState, loadState, clearState, saveArchive, loadArchive, galleryState };
   })();
 
   // ===== ui.js (deps: data.js,build.js,simEngine.js,engine.js) =====
@@ -4848,10 +5048,24 @@ function mateDetailHTML(mate) {
 }
 
 // ---------- 赛季总结 ----------
+function leagueAwardsHTML(list) {
+  if (!list || !list.length) return '';
+  return `<div class="label" style="margin-top:14px">🏆 联盟奖项</div>
+    <div class="ss-awards-list">
+    ${list.map(a => {
+      const who = a.winner
+        ? `<div class="al-winner ${a.winner.isMe ? 'me' : ''}">${a.winner.isMe ? '⭐ ' : ''}${esc(a.winner.name)} <span class="al-stat">OVR ${a.winner.ovr} · ${a.winner.pts}分 ${a.winner.reb}板 ${a.winner.ast}助</span></div>`
+        : (a.team ? `<div class="al-team">${a.team.map(p => `<span class="al-person ${p.isMe ? 'me' : ''}">${p.isMe ? '⭐ ' : ''}${esc(p.name)}<em>OVR ${p.ovr} · ${p.pts}/${p.reb}/${p.ast}</em></span>`).join('')}</div>` : '');
+      return `<div class="al-item"><div class="al-title">${esc(a.zh)}</div>${who}</div>`;
+    }).join('')}
+    </div>`;
+}
+
 function seasonSummaryHTML(sum) {
   const team = TEAMS[sum.teamId] || NCAA_TEAMS[sum.teamId] || null;
   const lg = LEAGUES[sum.leagueId];
   const awardChips = (sum.awards || []).map(a => `<span class="chip chip-green">🏅 ${E.awardZh(a)}</span>`).join('') || '<span class="muted-2">本赛季没有个人奖项</span>';
+  const nbaJump = sum.nbaJump;
   return `
     <div class="season-summary">
       <div class="ss-head">
@@ -4882,7 +5096,9 @@ function seasonSummaryHTML(sum) {
         return `<div class="ss-growth">能力变化：${lines.join(' ') || '—'}</div>`;
       })() : ''}
       ${sum.salary ? `<div class="ss-growth">💰 本季年薪 <b>${E.fmtMoney(sum.salary)}</b>${sum.contractLeft ? ` · 合同剩 ${sum.contractLeft} 年` : ''}</div>` : ''}
+      ${leagueAwardsHTML(sum.leagueAwards)}
       <div style="height:14px"></div>
+      ${nbaJump && nbaJump.available ? `<button class="btn btn-amber btn-lg btn-block" style="margin-bottom:8px" onclick="BL.tryNBAJump()">🚀 冲击 NBA（成功率约 ${nbaJump.pct}%）</button>` : ''}
       ${sum.growthPoints ? `<button class="btn btn-primary btn-lg btn-block" style="margin-bottom:8px" onclick="BL.openUpgrade()">📈 升级属性（${sum.growthBank || 0} 点）</button>` : ''}
       <button class="btn btn-outline btn-lg btn-block" onclick="BL.dismissSeasonSummary()">继续 →</button>
       <div style="height:24px"></div>
@@ -6187,6 +6403,20 @@ window.BL = {
   },
   dismissSeasonSummary() {
     app.seasonSummary = null;
+    render();
+  },
+  tryNBAJump() {
+    if (!app.state) return;
+    const res = E.tryNBAJump(app.state);
+    if (!res.ok) {
+      if (res.reason === 'chance_failed') toast('冲击 NBA 失败，继续努力');
+      else toast(res.reason || '失败');
+    } else {
+      toast(`🏀 成功！加盟 ${res.team.zh}`);
+      // 刷新总结的 NBA 状态
+      app.seasonSummary.nbaJump = E.nbaJumpInfo(app.state);
+    }
+    E.saveState(app.state);
     render();
   },
   viewGameBox(idx) {

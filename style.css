@@ -812,3 +812,15 @@ select.team-select {
 .mate-head .mt-name { font-size: 20px; font-weight: 900; margin-top: 2px; }
 .mate-head .mt-ovr { font-size: 22px; font-weight: 900; color: var(--amber); margin-top: 4px; }
 .mate-head .mt-starter { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+/* ================= 联盟奖项名单 ================= */
+.ss-awards-list { display: grid; gap: 8px; }
+.al-item { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; }
+.al-title { font-size: 11px; font-weight: 900; color: var(--accent-2); letter-spacing: 0.08em; }
+.al-winner { margin-top: 4px; font-size: 13px; font-weight: 800; }
+.al-winner.me { color: var(--amber); }
+.al-winner .al-stat { font-size: 10px; color: var(--text-3); font-weight: 700; margin-left: 6px; }
+.al-team { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.al-person { background: rgba(255,255,255,0.04); border-radius: 8px; padding: 4px 8px; font-size: 11px; font-weight: 700; }
+.al-person.me { background: rgba(251,191,36,0.12); color: var(--amber); }
+.al-person em { display: block; font-style: normal; font-size: 9px; color: var(--text-3); font-weight: 600; margin-top: 1px; }
+.btn-amber { background: var(--amber); color: #09090b; }

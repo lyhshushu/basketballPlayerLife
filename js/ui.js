@@ -423,10 +423,24 @@ function mateDetailHTML(mate) {
 }
 
 // ---------- 赛季总结 ----------
+function leagueAwardsHTML(list) {
+  if (!list || !list.length) return '';
+  return `<div class="label" style="margin-top:14px">🏆 联盟奖项</div>
+    <div class="ss-awards-list">
+    ${list.map(a => {
+      const who = a.winner
+        ? `<div class="al-winner ${a.winner.isMe ? 'me' : ''}">${a.winner.isMe ? '⭐ ' : ''}${esc(a.winner.name)} <span class="al-stat">OVR ${a.winner.ovr} · ${a.winner.pts}分 ${a.winner.reb}板 ${a.winner.ast}助</span></div>`
+        : (a.team ? `<div class="al-team">${a.team.map(p => `<span class="al-person ${p.isMe ? 'me' : ''}">${p.isMe ? '⭐ ' : ''}${esc(p.name)}<em>OVR ${p.ovr} · ${p.pts}/${p.reb}/${p.ast}</em></span>`).join('')}</div>` : '');
+      return `<div class="al-item"><div class="al-title">${esc(a.zh)}</div>${who}</div>`;
+    }).join('')}
+    </div>`;
+}
+
 function seasonSummaryHTML(sum) {
   const team = TEAMS[sum.teamId] || NCAA_TEAMS[sum.teamId] || null;
   const lg = LEAGUES[sum.leagueId];
   const awardChips = (sum.awards || []).map(a => `<span class="chip chip-green">🏅 ${E.awardZh(a)}</span>`).join('') || '<span class="muted-2">本赛季没有个人奖项</span>';
+  const nbaJump = sum.nbaJump;
   return `
     <div class="season-summary">
       <div class="ss-head">
@@ -457,7 +471,9 @@ function seasonSummaryHTML(sum) {
         return `<div class="ss-growth">能力变化：${lines.join(' ') || '—'}</div>`;
       })() : ''}
       ${sum.salary ? `<div class="ss-growth">💰 本季年薪 <b>${E.fmtMoney(sum.salary)}</b>${sum.contractLeft ? ` · 合同剩 ${sum.contractLeft} 年` : ''}</div>` : ''}
+      ${leagueAwardsHTML(sum.leagueAwards)}
       <div style="height:14px"></div>
+      ${nbaJump && nbaJump.available ? `<button class="btn btn-amber btn-lg btn-block" style="margin-bottom:8px" onclick="BL.tryNBAJump()">🚀 冲击 NBA（成功率约 ${nbaJump.pct}%）</button>` : ''}
       ${sum.growthPoints ? `<button class="btn btn-primary btn-lg btn-block" style="margin-bottom:8px" onclick="BL.openUpgrade()">📈 升级属性（${sum.growthBank || 0} 点）</button>` : ''}
       <button class="btn btn-outline btn-lg btn-block" onclick="BL.dismissSeasonSummary()">继续 →</button>
       <div style="height:24px"></div>
@@ -1762,6 +1778,20 @@ window.BL = {
   },
   dismissSeasonSummary() {
     app.seasonSummary = null;
+    render();
+  },
+  tryNBAJump() {
+    if (!app.state) return;
+    const res = E.tryNBAJump(app.state);
+    if (!res.ok) {
+      if (res.reason === 'chance_failed') toast('冲击 NBA 失败，继续努力');
+      else toast(res.reason || '失败');
+    } else {
+      toast(`🏀 成功！加盟 ${res.team.zh}`);
+      // 刷新总结的 NBA 状态
+      app.seasonSummary.nbaJump = E.nbaJumpInfo(app.state);
+    }
+    E.saveState(app.state);
     render();
   },
   viewGameBox(idx) {
