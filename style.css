@@ -43,9 +43,11 @@ input, select { font-family: inherit; }
   min-height: 0;
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 24px 20px 32px;
   scrollbar-width: thin;
   scrollbar-color: #3f3f46 transparent;
+  word-break: break-word;
 }
 
 .scroll::-webkit-scrollbar { width: 4px; }
@@ -651,7 +653,7 @@ select.team-select {
 .build-progress { display: flex; align-items: center; gap: 10px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; margin-bottom: 14px; }
 .bp-bar { height: 8px; border-radius: 99px; background: var(--accent); transition: width 0.3s; min-width: 4px; }
 .bp-txt { font-size: 12px; font-weight: 900; color: var(--accent-2); white-space: nowrap; }
-.attr-lock-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; margin-bottom: 14px; }
+.attr-lock-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 8px; margin-bottom: 14px; }
 .attr-lock { display: flex; align-items: center; gap: 6px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; cursor: pointer; }
 .attr-lock.todo { opacity: 0.55; }
 .attr-lock.next { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; opacity: 1; }
@@ -666,24 +668,24 @@ select.team-select {
 .team-slot { display: flex; align-items: center; justify-content: center; min-height: 52px; background: var(--card); border: 1px dashed var(--line-2); border-radius: 12px; margin-bottom: 10px; }
 .ts-team { font-size: 15px; font-weight: 900; color: var(--amber); }
 .ts-empty { font-size: 13px; color: var(--text-3); }
-.roster-area { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-bottom: 14px; }
-.player-card { text-align: center; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 8px; cursor: pointer; color: var(--text); font-family: inherit; transition: border-color 0.12s, transform 0.12s; }
+.roster-area { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin-bottom: 14px; }
+.player-card { text-align: center; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 8px 4px; cursor: pointer; color: var(--text); font-family: inherit; transition: border-color 0.12s, transform 0.12s; min-width: 0; }
 .player-card:hover { border-color: #3f3f46; }
 .player-card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; transform: translateY(-1px); }
-.player-card .pc-portrait { width: 56px; height: 56px; margin: 0 auto 6px; border-radius: 50%; overflow: hidden; background: #1c1c1f; display: flex; align-items: center; justify-content: center; border: 2px solid var(--line); }
+.player-card .pc-portrait { width: 48px; height: 48px; margin: 0 auto 4px; border-radius: 50%; overflow: hidden; background: #1c1c1f; display: flex; align-items: center; justify-content: center; border: 2px solid var(--line); }
 .player-card.active .pc-portrait { border-color: var(--accent); }
 .player-card .pc-portrait img { width: 100%; height: 100%; object-fit: cover; }
-.player-card .pc-portrait.ph .ph-txt { display: flex !important; font-size: 20px; font-weight: 900; color: var(--text-2); align-items: center; justify-content: center; }
-.player-card .pc-pos { font-size: 10px; font-weight: 900; color: var(--accent-2); }
+.player-card .pc-portrait.ph .ph-txt { display: flex !important; font-size: 16px; font-weight: 900; color: var(--text-2); align-items: center; justify-content: center; }
+.player-card .pc-pos { font-size: 9px; font-weight: 900; color: var(--accent-2); white-space: nowrap; }
 .player-card.historical .pc-pos { color: var(--amber); }
-.player-card .pc-name { font-size: 12px; font-weight: 800; color: var(--text); margin-top: 4px; line-height: 1.3; }
-.player-card .pc-badge { display: inline-block; margin-top: 4px; font-size: 9px; font-weight: 900; padding: 2px 6px; border-radius: 999px; }
+.player-card .pc-name { font-size: 11px; font-weight: 800; color: var(--text); margin-top: 2px; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.player-card .pc-badge { display: inline-block; margin-top: 2px; font-size: 8px; font-weight: 900; padding: 1px 5px; border-radius: 999px; white-space: nowrap; }
 .player-card .pc-badge.hof { background: rgba(251,191,36,0.18); color: #fbbf24; }
 .player-card .pc-badge.astar { background: rgba(59,130,246,0.18); color: #60a5fa; }
 .player-card.historical { border-color: rgba(251,191,36,0.4); background: linear-gradient(160deg, rgba(251,191,36,0.08), transparent 55%); }
-.player-card .pc-era { font-size: 9px; color: var(--text-3); margin-top: 2px; }
-.player-card .pc-ovr { font-size: 20px; font-weight: 900; color: var(--amber); margin-top: 4px; }
-.player-card .pc-type { font-size: 9px; color: var(--text-3); margin-top: 4px; }
+.player-card .pc-era { font-size: 8px; color: var(--text-3); margin-top: 1px; white-space: nowrap; }
+.player-card .pc-ovr { font-size: 16px; font-weight: 900; color: var(--amber); margin-top: 2px; }
+.player-card .pc-type { font-size: 8px; color: var(--text-3); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .build-actions { display: grid; gap: 8px; }
 .build-hint { margin-top: 12px; font-size: 11px; color: var(--text-3); text-align: center; line-height: 1.8; }
 .reveal-card { text-align: center; background: linear-gradient(160deg, rgba(16,185,129,0.12), transparent 60%); border: 1px solid var(--line); border-radius: 16px; padding: 22px 16px; }
@@ -824,3 +826,23 @@ select.team-select {
 .al-person.me { background: rgba(251,191,36,0.12); color: var(--amber); }
 .al-person em { display: block; font-style: normal; font-size: 9px; color: var(--text-3); font-weight: 600; margin-top: 1px; }
 .btn-amber { background: var(--amber); color: #09090b; }
+/* ================= 手机适配（抽取页等） ================= */
+@media (max-width: 420px) {
+  .scroll { padding: 16px 12px 28px; }
+  .attr-lock-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+  .attr-lock { padding: 6px 6px; gap: 3px; }
+  .attr-lock .al-zh { font-size: 11px; }
+  .attr-lock .al-icon { font-size: 11px; }
+  .attr-lock .al-val { font-size: 12px; }
+  .attr-lock .al-from { display: none; }
+  .roster-area { gap: 4px; }
+  .player-card .pc-portrait { width: 40px; height: 40px; }
+  .player-card .pc-name { font-size: 10px; }
+  .player-card .pc-ovr { font-size: 14px; }
+  .player-card .pc-type { display: none; }
+  .player-card .pc-badge { font-size: 7px; padding: 1px 3px; }
+  .build-hint { font-size: 10px; }
+  .label { font-size: 11px; }
+  .reveal-name { font-size: 18px; }
+  .reveal-ovr .ro-val { font-size: 40px; }
+}
