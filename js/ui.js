@@ -387,6 +387,7 @@ function seasonHTML(s) {
       ${matesHTML ? `<div class="mate-list">${matesHTML}</div>` : '<div class="empty">暂无队友数据</div>'}
 
       <div class="season-actions">
+        <button class="btn btn-primary" onclick="BL.enterSeasonGame()">🎮 进入比赛</button>
         <button class="btn btn-primary" onclick="BL.simGames(1)">▶ 模拟 1 场</button>
         <button class="btn btn-primary" onclick="BL.simGames(5)">⏩ 模拟 5 场</button>
         <button class="btn btn-outline" onclick="BL.simAll()">快进整个赛季</button>
@@ -1779,6 +1780,7 @@ window.BL = {
     g.stage = ctx.stage;
     g.label = ctx.label;
     g.awayName = ctx.awayTeam.zh;
+    g.awayId = ctx.awayId;
     g.tournamentAge = ctx.tournamentAge != null ? ctx.tournamentAge : (st.pendingGame ? st.pendingGame.tournamentAge : null);
     app.game = g;
     app.gameStep = 0;
@@ -1822,8 +1824,14 @@ window.BL = {
     render();
   },
   skipGame() {
-    // 跳过：直接按原概率判定（如果有关键事件就交给 choose；否则就按原赛果继续）
+    // 跳过：常规赛直接模拟1场；关键事件则交给 choose 判定
     const st = app.state;
+    if (app.gameCtx && app.gameCtx.kind === 'regular') {
+      app.game = null; app.gameView = null; app.gameCtx = null;
+      app.view = 'career';
+      BL.simGames(1);
+      return;
+    }
     if (st && st.currentEvent && st.currentEvent.type === 'showdown') {
       app.game = null; app.gameView = null; app.gameCtx = null;
       app.view = 'career';
@@ -1841,7 +1849,12 @@ window.BL = {
     const st = app.state;
     const g = app.game;
     if (st && g) {
-      E.applyGameResult(st, g);
+      if (g.kind === 'regular') {
+        // 常规赛：把完整模拟结果写入赛季统计
+        E.applyRegularGameResult(st, g, g.awayId);
+      } else {
+        E.applyGameResult(st, g);
+      }
       E.saveState(st);
     }
     app.game = null;
@@ -1850,6 +1863,11 @@ window.BL = {
     app.view = 'career';
     app.pendingBanner = false;
     app.receipt = false;
+    // 赛季打完则推进
+    if (st && st.season && st.season.done) {
+      BL.advanceAfterRegularSeason();
+      return;
+    }
     render();
   },
   confirmIdentity() {
@@ -1952,6 +1970,32 @@ window.BL = {
     render();
   },
   // ---------- 逐场赛季 ----------
+  enterSeasonGame() {
+    if (!app.state || !app.state.season || app.state.season.done) return;
+    const opp = E.nextOpponent(app.state);
+    if (!opp) { toast('没有可模拟的比赛'); return; }
+    const st = app.state;
+    const homeTeam = TEAMS[st.season.teamId] || NCAA_TEAMS[st.season.teamId];
+    const awayTeam = TEAMS[opp.id] || NCAA_TEAMS[opp.id];
+    app.gameCtx = {
+      kind: 'regular',
+      label: `${homeTeam.zh} vs ${awayTeam.zh}`,
+      homeId: homeTeam.id,
+      homeTeam,
+      awayId: awayTeam.id,
+      awayTeam,
+      stage: 'regular',
+      seed: (st.seed.split('-').pop() || '0') + st.step + st.season.played,
+    };
+    app.game = null;
+    app.gameStep = 0;
+    app.gameView = 'pre';
+    app.gameSpeed = 4;
+    app.gameTimer = null;
+    app.gameQ = 1;
+    app.view = 'game';
+    render();
+  },
   simGames(n) {
     if (!app.state || !app.state.season) return;
     E.simNextGames(app.state, n);

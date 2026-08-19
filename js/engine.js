@@ -1234,6 +1234,59 @@ export function simNextGames(state, n = 1) {
   return out;
 }
 
+// 把一场"完整模拟（逐回合 play-by-play）"的常规赛结果写入赛季统计
+// game 来自 simEngine.simulateGame；oppId 是对手球队 id
+export function applyRegularGameResult(state, game, oppId) {
+  const season = state.season;
+  if (!season || season.done) return false;
+  const teamTable = season.kind === 'ncaa' ? NCAA_TEAMS : TEAMS;
+  const homeTeam = teamTable[season.teamId];
+  const opp = oppId ? teamTable[oppId] : null;
+  if (!homeTeam) return false;
+  const win = game.winner === 'home';
+  const rec = {
+    g: season.played + 1,
+    opp: opp ? opp.zh : (game.away.zh || '对手'),
+    oppId: oppId || null,
+    home: true,
+    myScore: game.homeScore,
+    oppScore: game.awayScore,
+    win,
+    my: {
+      pts: game.myPts || 0,
+      reb: game.myReb || 0,
+      ast: game.myAst || 0,
+      stl: game.myStl || 0,
+      blk: game.myBlk || 0,
+    },
+    homeBox: game.box.home.players.map(p => ({ name: p.name, pos: p.pos, ovr: 0, starter: false, isMe: p.isMe, pts: p.pts, reb: p.reb, ast: p.ast, stl: p.stl, blk: p.blk })),
+    awayBox: game.box.away.players.map(p => ({ name: p.name, pos: p.pos, ovr: 0, starter: false, isMe: p.isMe, pts: p.pts, reb: p.reb, ast: p.ast, stl: p.stl, blk: p.blk })),
+    topScorers: [],
+    played: true,
+  };
+  season.games.push(rec);
+  season.played += 1;
+  if (win) season.wins += 1; else season.losses += 1;
+  season.myStats.g += 1;
+  season.myStats.pts += rec.my.pts;
+  season.myStats.reb += rec.my.reb;
+  season.myStats.ast += rec.my.ast;
+  season.myStats.stl += rec.my.stl;
+  season.myStats.blk += rec.my.blk;
+  if (season.played >= season.totalGames) season.done = true;
+  return true;
+}
+
+// 获取下一场对手信息（供"进入比赛"按钮）
+export function nextOpponent(state) {
+  const season = state.season;
+  if (!season || season.done) return null;
+  const teamTable = season.kind === 'ncaa' ? NCAA_TEAMS : TEAMS;
+  const g = season.schedule[season.played];
+  const opp = g && g.oppId ? teamTable[g.oppId] : null;
+  return opp ? { id: opp.id, zh: opp.zh, abbr: opp.abbr, color: opp.color, league: opp.league, strength: opp.strength, home: !!g.home } : null;
+}
+
 // 生成一笔联盟交易；若涉及能力>80 的球员则返回提示信息
 function tryGenerateTrade(state, season, teamTable, rng) {
   const teams = Object.values(TEAMS).filter(t => t.league === season.leagueId);
