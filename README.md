@@ -1,0 +1,90 @@
+# 完美球员 · 篮球生涯模拟器
+
+整合三个开源项目的浏览器篮球生涯游戏（纯前端、单机、本地存档）：
+
+- **basketballCareerSimulator** — 生涯引擎：选国籍位置、16 岁青训打到退役、转会/伤病/绝杀/国家队、一生之敌、40+ 决策事件、三种节奏、生涯战绩卡、历史档案、称号图鉴
+- **perfect-player** — 建球员流程：随机球队 → 抽 5 张球员卡 → 逐项抽取 13 维属性，跨位置衰减，最后揭晓 OVR/潜力/模板
+- **NBA-Sim-Web** — 单场模拟引擎（精简移植）：24 秒进攻 → 选进攻/防守人 → 失误/犯规/盖帽/投篮判定 → 篮板 → 球权转换，play-by-play 解说 + 比分快照 + Box Score
+
+## 玩法
+
+1. 建档：姓名、国籍、位置、惯用手、号码、儿时主队
+2. **建球员**：老虎机随机抽一支 NBA 球队 → 该队抽 5 张球员卡（一排展示，带真实球员头像）→ 选一名球员 → 点击下方**任意**未锁定属性槽锁定该项属性（跨位置有衰减）→ 自动换队，循环 13 次锁满 → 揭晓你的 OVR、潜力与模板
+   - **历史名宿惊喜卡**：每次抽卡有 20% 概率混入一张历史球员卡（名人堂/全明星，如伯德、艾弗森、J博士，带年代与金框徽章），可抽取他们的属性
+3. 生涯：从 16 岁青训开始，每个关键节点做决定
+   - **16-18 岁**：本国青训，期间有青训决策
+   - **19 岁 NCAA 抉择**：可尝试 NCAA 招募（按能力决定成功率与学校强弱）→ 成功则进入美国大学打球；失败或拒绝则直接签职业合同
+   - **NCAA 生涯**：大一赛季结束后选择「参加 NBA 选秀 / 留校再打一年 / 转职业」，参选按能力模拟选秀顺位（状元→乐透→首轮→次轮→落选），选中即加入 NBA 球队；留校可提升顺位
+   - **逐级晋升的转会**：不选 NCAA 或落选的球员，低级别联赛 → 高级别联赛 → NBA，能力超过当前联赛水平时会收到更高一级的报价
+4. **关键之战**（新增）：打进半决赛/总决赛、抢七、绝杀、关键罚球、国家队生死战时，可进入**逐回合单场模拟**，亲手把比赛打下来，结果直接影响生涯战绩
+   - 事件卡出现「🎮 进入比赛模拟」，或直接选选项用原概率判定
+   - 半决赛/总决赛赛季结束后，banner 上可「模拟关键战」或跳过
+5. 生涯结束：自动生成可保存/分享的生涯战绩卡，写入历史档案与称号图鉴（战绩卡显示选秀顺位与 NCAA 季数）
+
+## 运行
+
+**方式一：双击 index.html 直接玩（推荐）**
+
+项目已打包成单文件 `standalone.js`（球员池数据内嵌），无需任何服务器：
+
+```bash
+双击 hoop-life/index.html 即可在浏览器打开
+```
+
+修改源码后需要重新打包：
+
+```bash
+node tools/build_standalone.mjs   # 重新生成 standalone.js
+```
+
+**方式二：静态服务器（开发模式，加载未打包的 js/ 模块）**
+
+```bash
+# Node
+npx serve .
+
+# Python
+python -m http.server 8080
+```
+
+访问 `http://localhost:8080`。注意：开发模式下 index.html 加载的是 `standalone.js`，若想直接调试各模块，把 index.html 里 `<script src="standalone.js">` 换回三个 `type="module"` 的 script 标签（见 `index-module.html`）。
+
+## 文件结构
+
+```text
+index.html              入口（双击直接玩，加载 standalone.js）
+index-module.html       开发入口（需 http 服务器，加载 js/ 模块）
+standalone.js           单文件打包产物（由构建脚本生成，含球员池数据）
+style.css               样式（深色主题，含建球员/比赛模拟新样式）
+js/data.js              数据层（国家/球队/联赛/事件/称号）
+js/engine.js            生涯引擎（含单场关键战接入）
+js/build.js             建球员流程（13 次锁属性）
+js/simEngine.js         单场逐回合模拟引擎（移植自 NBA-Sim-Web）
+js/ui.js                UI（建档/建球员/生涯/比赛模拟/结算/档案/图鉴）
+assets/data/playerpool.json       NBA 30 队现役球员池（含 332 张头像映射，提取自 perfect-player）
+assets/data/historicalpool.json   历史名宿池（132 人：70 名人堂 + 62 全明星）
+assets/img/player/*.png           现役球员头像（hupu-current 提取，332 张）
+assets/img/historical/*.png       历史名宿头像（historical-nba 提取，147 张）
+tools/extract_pool.mjs  重新提取球员池的脚本
+tools/build_standalone.mjs  打包生成 standalone.js 的脚本
+tools/smoke.mjs         浏览器冒烟测试（http 版，需本机 Chrome/Edge）
+tools/smoke-file.mjs    file:// 直开冒烟测试
+tools/smoke-standalone.mjs  打包版完整流程冒烟测试
+```
+
+## 单场模拟引擎说明
+
+`simEngine.js` 是 NBA-Sim-Web `Game.ts` 逐回合逻辑的精简移植：
+
+- 每回合：24 秒进攻时钟 → 按进攻属性加权选出手人（我方核心额外加成）→ 同位置优先选防守人 → 失误/抢断判定 → 犯规判定（含罚球）→ 按距离与属性计算命中率 → 进攻/防守篮板 → 球权转换
+- 位置决定出手倾向（内线更多禁区出手，后卫更多三分/中投）
+- 主客场、季后赛强度、关键时刻（最后 24 秒分差 ≤3）对命中率有修正
+- 输出 play-by-play 解说 + 逐行比分快照 + 双方 Box Score
+
+## 测试
+
+```bash
+node tools/smoke-file.mjs            # file:// 双击直开冒烟测试
+node tools/smoke-standalone.mjs      # 打包版完整流程冒烟测试（建球员 13 次锁定 + 生涯推进 + 单场模拟 + 战绩卡）
+node tools/smoke.mjs                 # 开发模式 http 冒烟测试
+```
