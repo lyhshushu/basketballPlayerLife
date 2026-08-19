@@ -3594,8 +3594,20 @@ function finishSeason(state) {
   if (result.league === 'champion' && !awards.includes('fmvp') && state.player.overall >= 84) {
     awards.push('fmvp');
   }
-  // 完整奖项：基于赛季数据判定（MVP/得分王/最佳阵容等）
-  const fullAwards = computeSeasonAwards(state, season, avg, result, awards);
+  // 完整奖项：以联盟奖项为准，个人奖项 = 联盟评选结果中玩家获奖的项（保证一致）
+  const leagueAwardsList = generateLeagueAwards(state, result);
+  const myFromLeague = [];
+  for (const a of leagueAwardsList) {
+    if (a.winner && a.winner.isMe) myFromLeague.push(a.key);
+    if (a.team && a.team.some(p => p.isMe)) myFromLeague.push(a.key);
+  }
+  // 补充非联盟奖项类的生涯记录（大赛等）
+  const extraAwards = [];
+  const awardsSet = new Set(awards);
+  ['tournament_mvp', 'tournament_all_team', 'dunk_king', 'three_king', 'allstar_mvp'].forEach(k => {
+    if (awardsSet.has(k)) extraAwards.push(k);
+  });
+  const fullAwards = [...new Set([...myFromLeague, ...extraAwards])];
   // 成长点数：赛季表现越好点数越多，年轻球员成长快（适量）
   const perf = g > 0 ? (avg.pts + avg.reb * 0.6 + avg.ast * 0.6) : 0;
   const ageBonus = state.player.age <= 23 ? 3 : state.player.age <= 27 ? 2 : state.player.age <= 31 ? 1 : 0;
@@ -3631,7 +3643,7 @@ function finishSeason(state) {
     resultZh: resultZh(result && result.league, LEAGUES[plan.leagueId]),
     awards: fullAwards,
     awardsDetail: fullAwards,
-    leagueAwards: generateLeagueAwards(state),
+    leagueAwards: leagueAwardsList,
     nbaJump: nbaJumpInfo(state),
     highlight,
     growthPoints,
@@ -3733,7 +3745,7 @@ function finishCareerSeason(state, team, age, modifiers) {
 }
 
 // 生成完整奖项名单：从联盟各队 roster 评选出每个奖项的获奖者（含能力值/数据），我参与竞争
-function generateLeagueAwards(state) {
+function generateLeagueAwards(state, resultOverride) {
   const season = state.season;
   if (!season) return [];
   const myTeamId = season.teamId;
@@ -3940,7 +3952,8 @@ function generateLeagueAwards(state) {
   }
 
   // 最佳第六人 / 进步最快 / FMVP（赛季结果相关）
-  const champion = state.lastSeasonSummary && state.lastSeasonSummary.result && state.lastSeasonSummary.result.league === 'champion';
+  const champion = (resultOverride ? resultOverride.league === 'champion'
+    : state.lastSeasonSummary && state.lastSeasonSummary.result && state.lastSeasonSummary.result.league === 'champion');
   if (season.kind === 'pro' && champion) {
     const fmvp = pickBest([...candidates].filter(p => p.isMe || p.ovr >= 85), p => p.avg.pts);
     awards.push({ key: 'fmvp', zh: '总决赛MVP', winner: makeLine(fmvp) });
@@ -4142,12 +4155,25 @@ function step(state) {
     return { state, screen: 'season' };
   }
 
-  // 常规赛打完 → 决定是否进季后赛
+  // 常规赛打完 → 按分区排名决定季后赛资格（NBA 规则：前6直接晋级，7-10 附加赛，11+ 淘汰）
   if (!state.playoffs) {
-    // 胜率决定：<45% 无缘季后赛；45-55% 打附加赛；≥55% 直接晋级
-    const winPct = state.season.totalGames > 0 ? state.season.wins / state.season.totalGames : 0;
-    const made = winPct >= 0.45 && state.season.losses < state.season.totalGames;
-    if (!made) {
+    const isNba = state.season.kind === 'pro' && LEAGUES[state.season.leagueId] && LEAGUES[state.season.leagueId].tier === 1;
+    let rank = null, direct = false, playIn = false;
+    if (isNba) {
+      // 按真实排名判断（东西部各队）
+      const std = generateStandings(state);
+      const myConf = (team.conf === 'E' ? std.E : std.W) || [];
+      const idx = myConf.findIndex(t => t.id === state.season.teamId);
+      rank = idx >= 0 ? idx + 1 : null;
+      direct = rank != null && rank <= 6;
+      playIn = rank != null && rank >= 7 && rank <= 10;
+    } else {
+      // 非 NBA：按胜率简化（≥55% 直接晋级，45-55% 附加赛，<45% 淘汰）
+      const winPct = state.season.totalGames > 0 ? state.season.wins / state.season.totalGames : 0;
+      direct = winPct >= 0.55;
+      playIn = winPct >= 0.45 && winPct < 0.55;
+    }
+    if (!direct && !playIn) {
       // 未进季后赛，直接结算
       const snapshot = finishCareerSeason(state, team, age, seasonModifiers);
       if (!snapshot) {
@@ -4158,8 +4184,9 @@ function step(state) {
       return settleSeasonResult(state, snapshot, team, age, seasonModifiers, suspended);
     }
     const po = beginPlayoffs(state, team);
-    // 附加赛：胜率 45-55% 先打一场生死战（赢了进首轮，输了出局）
-    po.playIn = winPct < 0.55;
+    // 附加赛：分区 7-10 名打一场生死战（赢了进首轮，输了出局）
+    po.playIn = playIn;
+    po.rank = rank;
     if (po.playIn) {
       po.roundNames = ['附加赛', ...po.roundNames];
       po.playInResult = null;
@@ -4281,13 +4308,6 @@ function settleSeasonResult(state, snapshot, team, age, modifiers, suspended) {
       seasonIndex: state.seasons.length - 1,
       opponentId: pickPlayoffOpponent(state, team, LEAGUES[team.league]),
     };
-  }
-
-  // 打到半决赛/决赛：可能触发抢七决战
-  if (!state.currentEvent && ['semis', 'final'].includes(snapshot.result.league)) {
-    const r = roll(state.rngState);
-    state.rngState = r.state;
-    if (r.v[0] < 0.45) state.currentEvent = showdownEvent('game7', state, null);
   }
 
   state.period.run += 1;
