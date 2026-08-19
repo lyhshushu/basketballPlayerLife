@@ -249,6 +249,11 @@ export function simulateGame(homeTeam, awayTeam, homeRoster, awayRoster, opts = 
     // 防守影响
     const defP = type === 'three' ? d.PDEF : d.IDEF;
     base -= (defP - 55) * 0.0018;
+    // 战术加成（我方进攻+命中，我方防守-对方命中）
+    if (tacticsMod !== 0) {
+      if (offSide === home) base += tacticsMod;
+      else base -= tacticsMod;
+    }
     // 主客场
     base += (offSide === home ? 0.015 : -0.015);
     // 季后赛更紧张
@@ -442,11 +447,29 @@ export function simulateGame(homeTeam, awayTeam, homeRoster, awayRoster, opts = 
   const maxQ = isPlayoff ? 4 : 4;
   let finalQuarter = maxQ;
 
+  // 我方球员加入竞争
+  let tacticsMod = 0; // 战术影响：正=我+命中，负=我-命中
+  const tqc = opts.tactics;
+
   for (let q = 1; q <= maxQ; q++) {
     startQuarter(q);
     doSubstitutions(home); doSubstitutions(away);
     // 我的球员始终在场上（简化）
     if (me) home.roster.forEach(p => { if (p.isMe) p.onCourt = true; });
+    // 第四节开始且分差接近时触发战术选择
+    if (q === 4 && tqc && me) {
+      updateScores();
+      const diff = homeScore.total - awayScore.total;
+      if (Math.abs(diff) <= 10) {
+        const t = tqc({ q, diff, myScore: homeScore.total, oppScore: awayScore.total });
+        if (t && t.success) {
+          tacticsMod = (t.mode === 'attack' || t.mode === 'defense') ? 0.1 : 0;
+        } else if (t && !t.success) {
+          tacticsMod = -0.1;
+        }
+        add(`🎯 第四节开始，分差 ${Math.abs(diff)} 分。${tacticsMod > 0 ? '你的战术奏效了！' : tacticsMod < 0 ? '战术没有奏效…' : '按常规打法继续。'}`);
+      }
+    }
     let guard = 0;
     while (poss.time > 0 && guard < 400) {
       guard++;

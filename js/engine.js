@@ -1425,8 +1425,34 @@ export function seasonOffseason(state) {
   const rookies = generateDraftClass(state, rng);
   state.rookiePool = state.rookiePool || [];
   state.rookiePool.push(...rookies);
+  // 休赛期国家队比赛（2-3 场 vs 随机国家）
+  const nationalGames = generateNationalGames(state, rng);
   state.rngState = (rng() * 4294967296) >>> 0 || 12345;
-  return { trades, rookies };
+  return { trades, rookies, nationalGames };
+}
+
+// 生成休赛期国家队比赛（2-3 场，对手为随机其他国家）
+function generateNationalGames(state, rng) {
+  const myCountry = state.player.nationalityCode;
+  const countries = Object.entries(COUNTRIES).filter(([code]) => code !== myCountry);
+  if (!countries.length) return [];
+  const n = 2 + (rng() < 0.5 ? 1 : 0);
+  const games = [];
+  const used = new Set();
+  for (let i = 0; i < n; i++) {
+    let c = countries[Math.floor(rng() * countries.length)];
+    let g2 = 0;
+    while (used.has(c[0]) && g2++ < 10) c = countries[Math.floor(rng() * countries.length)];
+    used.add(c[0]);
+    games.push({
+      id: `nat-${i}`,
+      oppCode: c[0],
+      oppZh: c[1].zh,
+      oppFlag: c[1].flag,
+      oppTier: c[1].tier,
+    });
+  }
+  return games;
 }
 
 // 生成一届选秀（新秀池），供休赛期展示与下一赛季 roster 使用
@@ -1733,8 +1759,50 @@ export function simPlayoffGames(state, n = 1) {
   return out;
 }
 
-// 赛季结束：应用成长，返回最终 snapshot（stats 用实际累计场均）
-// 获取我队 roster（含场均数据），供队友面板/box 展示
+// 把一场 play-by-play 的季后赛结果写入季后赛状态（淘汰/晋级判定）
+export function applyPlayoffGameResult(state, game) {
+  const po = state.playoffs;
+  if (!po || po.done) return false;
+  const season = state.season;
+  const teamTable = season && season.kind === 'ncaa' ? NCAA_TEAMS : TEAMS;
+  const myTeam = teamTable[season.teamId];
+  const opp = teamTable[po.currentOppId];
+  const rec = {
+    g: po.games.length + 1,
+    opp: opp ? opp.zh : (game.away.zh || '对手'),
+    oppId: po.currentOppId,
+    home: true,
+    myScore: game.homeScore,
+    oppScore: game.awayScore,
+    win: game.winner === 'home',
+    my: { pts: game.myPts || 0, reb: game.myReb || 0, ast: game.myAst || 0, stl: game.myStl || 0, blk: game.myBlk || 0 },
+    played: true,
+  };
+  po.games.push(rec);
+  if (rec.win) po.myWins += 1; else po.oppWins += 1;
+  if (po.myWins >= 4 || po.oppWins >= 4) {
+    if (po.myWins >= 4) {
+      po.round += 1;
+      po.myWins = 0;
+      po.oppWins = 0;
+      if (po.round >= po.rounds.length) { po.done = true; po.champion = true; }
+      else po.currentOppId = po.rounds[po.round];
+    } else { po.done = true; po.eliminated = true; }
+  }
+  return true;
+}
+
+// 判断当前季后赛场次是否"关键场次"（强制单场模拟）：附加赛/总决赛/抢七/决胜场
+export function isPlayoffKeyGame(state) {
+  const po = state.playoffs;
+  if (!po || po.done) return false;
+  const isFinalRound = po.round >= po.rounds.length - 1;
+  const isPlayIn = po.playIn && po.playInResult == null;
+  const isGame7 = (po.myWins === 3 || po.oppWins === 3);
+  // 决胜场（我方或对方3胜，再赢1场晋级/淘汰）
+  const isDecisive = po.myWins >= 3 || po.oppWins >= 3;
+  return isPlayIn || isFinalRound || isGame7 || isDecisive;
+}
 export function getMyRoster(state) {
   const season = state.season;
   if (!season) return [];

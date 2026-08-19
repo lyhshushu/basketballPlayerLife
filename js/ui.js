@@ -29,6 +29,7 @@ const app = {
   invite: '',
   seasonSummary: null,
   offseason: null,
+  tacticsPref: 'normal',
   // 建球员
   build: null,
   // 单场模拟
@@ -645,9 +646,14 @@ function playoffsHTML(s) {
       <div class="season-games">${recent}</div>
 
       <div class="season-actions">
-        <button class="btn btn-primary" onclick="BL.simPlayoff(1)">▶ 模拟 1 场</button>
-        <button class="btn btn-primary" onclick="BL.simPlayoff(3)">⏩ 模拟 3 场</button>
-        <button class="btn btn-outline" onclick="BL.simPlayoffAll()">快进本轮</button>
+        ${E.isPlayoffKeyGame(s) ? `
+          <div class="key-game-banner">🔥 关键场次 · 必须亲自登场</div>
+          <button class="btn btn-primary btn-block" onclick="BL.enterPlayoffGame()">🎮 进入这场比赛</button>
+        ` : `
+          <button class="btn btn-primary" onclick="BL.simPlayoff(1)">▶ 模拟 1 场</button>
+          <button class="btn btn-primary" onclick="BL.simPlayoff(3)">⏩ 模拟 3 场</button>
+          <button class="btn btn-outline" onclick="BL.simPlayoffAll()">快进本轮</button>
+        `}
       </div>
       <div style="height:24px"></div>
     </div>
@@ -1244,6 +1250,8 @@ function gameHTML() {
 function gamePreHTML() {
   const ctx = app.gameCtx;
   if (!ctx) return '<div class="empty">无比赛</div>';
+  const tPref = app.tacticsPref || 'normal';
+  const tacBtn = (mode, zh, hint) => `<button class="btn btn-block ${tPref === mode ? 'btn-primary' : 'btn-outline'}" onclick="BL.setTactics('${mode}')">${zh} <span class="muted-2" style="font-size:10px">${hint}</span></button>`;
   return shell(`
     <div class="page-head"><h2>🏀 ${esc(ctx.label)}</h2></div>
     <div class="scroll">
@@ -1252,6 +1260,14 @@ function gamePreHTML() {
         <div class="gp-vs">VS</div>
         <div class="gp-away"><div class="gp-name">${esc(ctx.awayTeam.zh)}</div><div class="gp-abbr">${esc(ctx.awayTeam.abbr)}</div></div>
       </div>
+
+      <div class="label" style="margin-top:14px">🎯 战术安排 <span class="muted-2">（第四节比分接近时生效，各 50% 成功率）</span></div>
+      <div class="tactics-pick">
+        ${tacBtn('attack', '⚡ 全力进攻', '成功率+10%·失败-10%')}
+        ${tacBtn('defense', '🛡️ 铁血防守', '成功率+10%·失败-10%')}
+        ${tacBtn('normal', '☑️ 常规打法', '不冒风险')}
+      </div>
+
       <button class="btn btn-primary btn-lg btn-block" style="margin-top:16px" onclick="BL.playGame()">▶ 开始比赛</button>
       <button class="btn btn-outline btn-block" style="margin-top:8px" onclick="BL.skipGame()">跳过，用赛果直接判定</button>
       <div style="height:24px"></div>
@@ -1778,13 +1794,45 @@ window.BL = {
     if (!ctx) return;
     const st = app.state;
     // 准备名单
-    const pool = app.pool || {};
-    const homePool = pool[ctx.homeTeam.abbr.toUpperCase()] || null;
-    const awayPool = pool[ctx.awayTeam.abbr.toUpperCase()] || null;
-    const homeNames = surnamesFor(ctx.homeTeam);
-    const awayNames = surnamesFor(ctx.awayTeam);
-    const homeRoster = makeRoster(ctx.homeTeam, homeNames, homePool, { total: 10 });
-    const awayRoster = makeRoster(ctx.awayTeam, awayNames, awayPool, { total: 10 });
+    let homeRoster, awayRoster;
+    if (ctx._rosters) {
+      // 国家队比赛：用预生成的国家队 roster
+      homeRoster = ctx._rosters.home;
+      awayRoster = ctx._rosters.away;
+      // 插入玩家
+      const playerPos = POSITIONS[st.player.position]?.en || 'SF';
+      const mePlayer = {
+        name: st.player.name, pos: playerPos, ovr: st.player.overall,
+        starter: true, isMe: true, attrs: st.player.attrs || fallbackAttrs(st.player.overall),
+      };
+      homeRoster[0] = mePlayer;
+    } else if (ctx.playoff && st.season && st.season.rosters) {
+      // 季后赛：用赛季 roster（真实球员，含我方）
+      const toSimRoster = (players) => players.map(p => ({
+        name: p.name, pos: p.pos, ovr: p.ovr, starter: p.starter, isMe: !!p.isMe,
+        attrs: p.attrs || fallbackAttrs(p.ovr),
+      }));
+      homeRoster = toSimRoster(st.season.rosters.get(ctx.homeTeam.id) || []);
+      awayRoster = toSimRoster(st.season.rosters.get(ctx.awayTeam.id) || []);
+      if (homeRoster.length < 5) {
+        const pool = app.pool || {};
+        const homePool = pool[ctx.homeTeam.abbr.toUpperCase()] || null;
+        homeRoster = makeRoster(ctx.homeTeam, surnamesFor(ctx.homeTeam), homePool, { total: 10 });
+      }
+      if (awayRoster.length < 5) {
+        const pool = app.pool || {};
+        const awayPool = pool[ctx.awayTeam.abbr.toUpperCase()] || null;
+        awayRoster = makeRoster(ctx.awayTeam, surnamesFor(ctx.awayTeam), awayPool, { total: 10 });
+      }
+    } else {
+      const pool = app.pool || {};
+      const homePool = pool[ctx.homeTeam.abbr.toUpperCase()] || null;
+      const awayPool = pool[ctx.awayTeam.abbr.toUpperCase()] || null;
+      const homeNames = surnamesFor(ctx.homeTeam);
+      const awayNames = surnamesFor(ctx.awayTeam);
+      homeRoster = makeRoster(ctx.homeTeam, homeNames, homePool, { total: 10 });
+      awayRoster = makeRoster(ctx.awayTeam, awayNames, awayPool, { total: 10 });
+    }
     const playerPos = POSITIONS[st.player.position]?.en || 'SF';
     const g = simulateGame(ctx.homeTeam, ctx.awayTeam, homeRoster, awayRoster, {
       isPlayoff: ctx.kind !== 'last_shot' && ctx.kind !== 'free_throw',
@@ -1794,6 +1842,13 @@ window.BL = {
         pos: playerPos,
         overall: st.player.overall,
         attrs: st.player.attrs || fallbackAttrs(st.player.overall),
+      },
+      // 第四节比分接近时应用玩家预选战术（50%成功率）
+      tactics: (tctx) => {
+        const pref = app.tacticsPref || 'normal';
+        if (pref === 'normal') return { mode: 'normal', success: true };
+        const success = Math.random() < 0.5;
+        return { mode: pref, success };
       },
     });
     g.kind = ctx.kind;
@@ -1852,6 +1907,29 @@ window.BL = {
       BL.simGames(1);
       return;
     }
+    if (app.gameCtx && app.gameCtx.kind === 'playoff_regular') {
+      // 跳过 = 用简化模拟打一场季后赛
+      app.game = null; app.gameView = null; app.gameCtx = null;
+      app.view = 'career';
+      BL.simPlayoff(1);
+      return;
+    }
+    if (app.gameCtx && app.gameCtx.kind === 'national') {
+      // 跳过 = 按能力随机判定国家队胜负
+      const winP = 0.5 + (st.player.overall - 75) * 0.008;
+      const won = Math.random() < winP;
+      const oppZh = app.gameCtx.awayTeam.zh;
+      if (won) { st.legacyLines.push(`国家队热身赛，你率队击败了${oppZh}。`); st.natWins = (st.natWins||0)+1; }
+      else { st.legacyLines.push(`国家队热身赛，你不敌${oppZh}。`); st.natLosses = (st.natLosses||0)+1; }
+      if (app.offseason && app.offseason.nationalGames) {
+        app.offseason.nationalGames.splice(app.gameCtx.nationalIdx, 1);
+      }
+      app.game = null; app.gameView = null; app.gameCtx = null;
+      app.view = 'offseason';
+      E.saveState(st);
+      render();
+      return;
+    }
     if (st && st.currentEvent && st.currentEvent.type === 'showdown') {
       app.game = null; app.gameView = null; app.gameCtx = null;
       app.view = 'career';
@@ -1872,6 +1950,30 @@ window.BL = {
       if (g.kind === 'regular') {
         // 常规赛：把完整模拟结果写入赛季统计
         E.applyRegularGameResult(st, g, g.awayId);
+      } else if (g.kind === 'playoff_regular') {
+        // 季后赛单场：写回季后赛状态
+        E.applyPlayoffGameResult(st, g);
+      } else if (g.kind === 'national') {
+        // 国家队比赛：记录结果
+        const won = g.winner === 'home';
+        const oppZh = g.away.zh || '对手';
+        if (won) {
+          st.legacyLines.push(`国家队热身赛，你率队击败了${oppZh}。`);
+          st.natWins = (st.natWins || 0) + 1;
+        } else {
+          st.legacyLines.push(`国家队热身赛，你不敌${oppZh}。`);
+          st.natLosses = (st.natLosses || 0) + 1;
+        }
+        // 从休赛期移除已打的比赛
+        if (app.offseason && app.offseason.nationalGames) {
+          const idx = app.gameCtx.nationalIdx;
+          app.offseason.nationalGames.splice(idx, 1);
+        }
+        app.game = null; app.gameView = null; app.gameCtx = null;
+        app.view = 'offseason';
+        E.saveState(st);
+        render();
+        return;
       } else {
         E.applyGameResult(st, g);
       }
@@ -1883,6 +1985,11 @@ window.BL = {
     app.view = 'career';
     app.pendingBanner = false;
     app.receipt = false;
+    // 季后赛打完则结算
+    if (st && st.playoffs && st.playoffs.done) {
+      BL.finishPlayoffs();
+      return;
+    }
     // 赛季打完则推进
     if (st && st.season && st.season.done) {
       BL.advanceAfterRegularSeason();
@@ -1917,20 +2024,22 @@ window.BL = {
     render();
   },
   dismissSeasonSummary() {
-    // 赛季总结关闭后：若在职业联赛且 NBA，展示赛季后交易/自由市场 + 明星退役
+    // 赛季总结关闭后：休赛期（国家队比赛 + 交易 + 退役 + 新秀）
     if (app.state && app.state.currentTeamId && !app.state.season) {
-      const team = TEAMS[app.state.currentTeamId];
-      if (team && team.league === 'nba') {
-        const trades = E.seasonOffseason(app.state);
-        const retirements = E.starRetirements(app.state);
-        app.offseason = { trades: trades ? trades.trades : [], retirements };
-        if (app.offseason.trades.length || app.offseason.retirements.length) {
-          app.view = 'offseason';
-          app.seasonSummary = null;
-          E.saveState(app.state);
-          render();
-          return;
-        }
+      const trades = E.seasonOffseason(app.state);
+      const retirements = E.starRetirements(app.state);
+      app.offseason = {
+        trades: trades ? trades.trades : [],
+        retirements,
+        nationalGames: trades && trades.nationalGames ? trades.nationalGames : [],
+      };
+      const hasContent = app.offseason.trades.length || app.offseason.retirements.length || app.offseason.nationalGames.length;
+      if (hasContent) {
+        app.view = 'offseason';
+        app.seasonSummary = null;
+        E.saveState(app.state);
+        render();
+        return;
       }
     }
     app.seasonSummary = null;
@@ -1990,9 +2099,79 @@ window.BL = {
     render();
   },
   // ---------- 逐场赛季 ----------
+  setTactics(mode) {
+    app.tacticsPref = mode;
+    render();
+  },
+  enterNationalGame(idx) {
+    if (!app.state || !app.offseason) return;
+    const games = app.offseason.nationalGames || [];
+    const g = games[idx];
+    if (!g) return;
+    const st = app.state;
+    const myCountry = COUNTRIES[st.player.nationalityCode];
+    // 构造国家队对阵（用国家名构造球队对象，roster 用姓氏池）
+    const myTeam = { abbr: myCountry.flag, zh: st.player.nationality, league: 'nba', strength: 70 + (myCountry.tier === 1 ? 20 : myCountry.tier === 2 ? 12 : 6), id: 'nat-me', conf: 'W' };
+    const oppCountry = COUNTRIES[g.oppCode];
+    const oppTeam = { abbr: g.oppFlag, zh: g.oppZh, league: 'nba', strength: 65 + (g.oppTier === 1 ? 20 : g.oppTier === 2 ? 12 : 6), id: 'nat-opp', conf: 'E' };
+    const myNames = (myCountry.surnames || []).map(x => ({ zh: x }));
+    const oppNames = (oppCountry.surnames || []).map(x => ({ zh: x }));
+    const pool = app.pool || {};
+    const homeRoster = makeRoster(myTeam, myNames, null, { total: 8 });
+    const awayRoster = makeRoster(oppTeam, oppNames, null, { total: 8 });
+    app.gameCtx = {
+      kind: 'national',
+      label: `${myTeam.zh} vs ${oppTeam.zh}`,
+      homeId: 'nat-me',
+      homeTeam: myTeam,
+      awayId: 'nat-opp',
+      awayTeam: oppTeam,
+      stage: 'national',
+      seed: (st.seed.split('-').pop() || '0') + 'nat' + idx,
+      nationalIdx: idx,
+      nationalOpp: g,
+    };
+    // 用预生成的 rosters
+    app.gameCtx._rosters = { home: homeRoster, away: awayRoster };
+    app.game = null;
+    app.gameStep = 0;
+    app.gameView = 'pre';
+    app.gameSpeed = 4;
+    app.gameTimer = null;
+    app.gameQ = 1;
+    app.view = 'game';
+    render();
+  },
+  enterPlayoffGame() {
+    if (!app.state || !app.state.playoffs || app.state.playoffs.done) return;
+    const st = app.state;
+    const po = st.playoffs;
+    const teamTable = (st.season && st.season.kind === 'ncaa') ? NCAA_TEAMS : TEAMS;
+    const homeTeam = teamTable[st.season.teamId];
+    const opp = teamTable[po.currentOppId];
+    if (!homeTeam || !opp) { toast('无法进入比赛'); return; }
+    app.gameCtx = {
+      kind: 'playoff_regular',
+      label: `${po.roundNames[po.round] || '季后赛'} · ${homeTeam.zh} vs ${opp.zh}`,
+      homeId: homeTeam.id,
+      homeTeam,
+      awayId: opp.id,
+      awayTeam: opp,
+      stage: 'playoff',
+      seed: (st.seed.split('-').pop() || '0') + st.step + 'p' + po.games.length,
+      playoff: true,
+    };
+    app.game = null;
+    app.gameStep = 0;
+    app.gameView = 'pre';
+    app.gameSpeed = 4;
+    app.gameTimer = null;
+    app.gameQ = 1;
+    app.view = 'game';
+    render();
+  },
   enterSeasonGame() {
-    if (!app.state || !app.state.season || app.state.season.done) return;
-    const opp = E.nextOpponent(app.state);
+    if (!app.state || !app.state.season || app.state.season.done) return;    const opp = E.nextOpponent(app.state);
     if (!opp) { toast('没有可模拟的比赛'); return; }
     const st = app.state;
     const homeTeam = TEAMS[st.season.teamId] || NCAA_TEAMS[st.season.teamId];
@@ -2239,6 +2418,16 @@ function offseasonHTML() {
       <div class="trade-list">${tradesHTML}</div>
       <div class="label" style="margin-top:14px">👋 明星退役</div>
       <div class="retire-list">${retHTML}</div>
+      ${(o.nationalGames || []).length ? `
+      <div class="label" style="margin-top:14px">🏀 国家队热身赛 <span class="muted-2">（代表你的国家参赛）</span></div>
+      <div class="nat-list">
+        ${o.nationalGames.map(g => `
+          <button class="nat-game-row" onclick="BL.enterNationalGame(${o.nationalGames.indexOf(g)})">
+            <span class="ng-flag">${g.oppFlag}</span>
+            <span class="ng-name">${esc(COUNTRIES[s.player.nationalityCode].flag)} 你 vs ${g.oppZh}</span>
+            <span class="ng-go">🎮 进入比赛 →</span>
+          </button>`).join('')}
+      </div>` : ''}
       ${(o.rookies || []).length ? `
       <div class="label" style="margin-top:14px">🎓 选秀新秀</div>
       <div class="rookie-list">

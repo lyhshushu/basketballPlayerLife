@@ -912,3 +912,12 @@ select.team-select {
   animation: rise 0.35s ease both;
 }
 .auto-toast.out { transition: opacity 0.4s, transform 0.4s; opacity: 0; transform: translate(-50%, -46%); }
+.tactics-pick { display: grid; gap: 8px; }
+/* ================= 国家队热身赛 ================= */
+.nat-list { display: grid; gap: 6px; }
+.nat-game-row { display: flex; align-items: center; gap: 10px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; width: 100%; color: var(--text); font-family: inherit; cursor: pointer; }
+.nat-game-row:hover { border-color: var(--accent); }
+.nat-game-row .ng-flag { font-size: 18px; }
+.nat-game-row .ng-name { flex: 1; font-size: 13px; font-weight: 800; }
+.nat-game-row .ng-go { font-size: 11px; font-weight: 800; color: var(--accent-2); }
+.key-game-banner { background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.4); border-radius: 10px; padding: 8px 12px; font-size: 12px; font-weight: 800; color: var(--amber); text-align: center; }

@@ -62,6 +62,20 @@ let sawContract = false;
 let guard = 0;
 let lastScreen = '';
 while (guard < 6000) {
+  // 季后赛关键场次：必须进入比赛（播放单场模拟）
+  if (await page.locator('.key-game-banner').first().isVisible().catch(() => false)) {
+    await page.locator('button:has-text("进入这场比赛")').click();
+    await page.waitForSelector('.game-pre-card');
+    await page.click('text=开始比赛');
+    await page.waitForSelector('.pbl-row');
+    await page.waitForTimeout(1200);
+    await page.waitForSelector('text=查看技术统计', { timeout: 30000 });
+    await page.click('text=查看技术统计');
+    await page.waitForSelector('.game-result');
+    await page.click('text=继续生涯');
+    await page.waitForTimeout(100);
+    continue;
+  }
   // 赛季页：快进
   if (await page.locator('.season-actions').first().isVisible().catch(() => false)) {
     await page.locator('.season-actions button:has-text("快进")').click();
@@ -69,7 +83,7 @@ while (guard < 6000) {
     lastScreen = 'season';
     continue;
   }
-  // 季后赛：快进本轮
+  // 季后赛：快进本轮（非关键场次）
   if (await page.locator('.playoffs-top').first().isVisible().catch(() => false)) {
     await page.locator('button:has-text("快进本轮")').click().catch(() => {});
     await page.waitForTimeout(40);
@@ -84,9 +98,17 @@ while (guard < 6000) {
     lastScreen = 'summary';
     continue;
   }
-  // 休赛期：进入新赛季
+  // 休赛期：国家队比赛（跳过）或进入新赛季
   if (await page.locator('.offseason-hero').first().isVisible().catch(() => false)) {
     sawOffseason = true;
+    if (await page.locator('.nat-game-row').first().isVisible().catch(() => false)) {
+      // 打一场国家队比赛（跳过判定）
+      await page.locator('.nat-game-row').first().click();
+      await page.waitForSelector('.game-pre-card');
+      await page.click('text=跳过，用赛果直接判定');
+      await page.waitForTimeout(200);
+      continue;
+    }
     await page.locator('button:has-text("进入新赛季")').click();
     await page.waitForTimeout(40);
     continue;
@@ -131,6 +153,19 @@ console.log('4 simTried:', simTried, 'seasonsPlayed:', seasonsPlayed, 'sawOffsea
 let extra = 0;
 while (extra < 400 && seasonsPlayed < 5) {
   if (await page.locator('.sum-hero').count()) break;
+  if (await page.locator('.key-game-banner').first().isVisible().catch(() => false)) {
+    await page.locator('button:has-text("进入这场比赛")').click();
+    await page.waitForSelector('.game-pre-card');
+    await page.click('text=开始比赛');
+    await page.waitForSelector('.pbl-row');
+    await page.waitForTimeout(1000);
+    await page.waitForSelector('text=查看技术统计', { timeout: 30000 });
+    await page.click('text=查看技术统计');
+    await page.waitForSelector('.game-result');
+    await page.click('text=继续生涯');
+    await page.waitForTimeout(60);
+    continue;
+  }
   if (await page.locator('.season-actions').first().isVisible().catch(() => false)) {
     await page.locator('.season-actions button:has-text("快进")').click();
     await page.waitForTimeout(25);
@@ -148,6 +183,13 @@ while (extra < 400 && seasonsPlayed < 5) {
     continue;
   }
   if (await page.locator('.offseason-hero').first().isVisible().catch(() => false)) {
+    if (await page.locator('.nat-game-row').first().isVisible().catch(() => false)) {
+      await page.locator('.nat-game-row').first().click();
+      await page.waitForSelector('.game-pre-card');
+      await page.click('text=跳过，用赛果直接判定');
+      await page.waitForTimeout(100);
+      continue;
+    }
     await page.locator('button:has-text("进入新赛季")').click();
     await page.waitForTimeout(15);
     continue;
