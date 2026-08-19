@@ -594,6 +594,7 @@ select.team-select {
   padding: 60px 20px;
   line-height: 2;
 }
+.roster-area > .empty { grid-column: 1 / -1; padding: 30px 12px; }
 
 /* ---------- 弹层 ---------- */
 .modal-mask {
