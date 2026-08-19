@@ -57,21 +57,29 @@ await page.waitForTimeout(300);
 let simTried = false;
 let seasonsPlayed = 0;
 let guard = 0;
-while (guard < 2500) {
+while (guard < 3000) {
   // 赛季页：快进整个赛季
-  if (await page.locator('.season-actions').count()) {
-    await page.click('button:has-text("快进整个赛季")');
-    await page.waitForTimeout(200);
+  if (await page.locator('.season-actions').first().isVisible().catch(() => false)) {
+    await page.locator('.season-actions button:has-text("快进")').click();
+    await page.waitForTimeout(150);
+    continue;
+  }
+  // 季后赛页：快进本轮
+  if (await page.locator('.playoffs-top').first().isVisible().catch(() => false)) {
+    await page.locator('.playoffs-top ~ .season-actions button:has-text("快进")').click().catch(async () => {
+      await page.locator('button:has-text("快进本轮")').click();
+    });
+    await page.waitForTimeout(150);
     continue;
   }
   // 赛季总结：继续
-  if (await page.locator('.season-summary').count()) {
-    await page.click('button:has-text("继续 →")');
+  if (await page.locator('.season-summary').first().isVisible().catch(() => false)) {
+    await page.locator('.season-summary button:has-text("继续")').click();
     await page.waitForTimeout(100);
     seasonsPlayed++;
     continue;
   }
-  if (await page.locator('.sim-entry').count()) {
+  if (await page.locator('.sim-entry').first().isVisible().catch(() => false)) {
     await page.click('.sim-entry');
     await page.waitForSelector('.game-pre-card');
     await page.click('text=开始比赛');
@@ -86,9 +94,10 @@ while (guard < 2500) {
     break;
   }
   const opt = page.locator('.option').first();
-  if (await opt.count()) { await opt.click(); await page.waitForTimeout(30); }
-  else if (await page.locator('.receipt').count()) { await page.locator('.receipt').first().click(); await page.waitForTimeout(30); }
-  else if (await page.locator('.banner').count()) { await page.locator('.banner').first().click(); await page.waitForTimeout(30); }
+  if (await opt.count() && await opt.isVisible().catch(() => false)) { await opt.click(); await page.waitForTimeout(30); }
+  else if (await page.locator('.receipt').first().isVisible().catch(() => false)) { await page.locator('.receipt').first().click(); await page.waitForTimeout(30); }
+  else if (await page.locator('.banner').first().isVisible().catch(() => false)) { await page.locator('.banner').first().click(); await page.waitForTimeout(30); }
+  else if (await page.locator('.upgrade-list').first().isVisible().catch(() => false)) { await page.locator('button:has-text("完成升级")').click(); await page.waitForTimeout(30); }
   else { await page.keyboard.press('Enter'); await page.waitForTimeout(30); }
   guard++;
 }
@@ -99,20 +108,26 @@ let sawKeyGames = false;
 let clicks2 = 0;
 while (clicks2 < 3000) {
   if (await page.locator('.sum-hero').count()) break;
-  if (await page.locator('.season-actions').count()) {
-    await page.click('button:has-text("快进整个赛季")');
-    await page.waitForTimeout(150);
+  if (await page.locator('.season-actions').first().isVisible().catch(() => false)) {
+    await page.locator('.season-actions button:has-text("快进")').click();
+    await page.waitForTimeout(100);
     continue;
   }
-  if (await page.locator('.season-summary').count()) {
-    await page.click('button:has-text("继续 →")');
-    await page.waitForTimeout(80);
+  if (await page.locator('.playoffs-top').first().isVisible().catch(() => false)) {
+    await page.locator('button:has-text("快进本轮")').click().catch(() => {});
+    await page.waitForTimeout(100);
+    continue;
+  }
+  if (await page.locator('.season-summary').first().isVisible().catch(() => false)) {
+    await page.locator('.season-summary button:has-text("继续")').click();
+    await page.waitForTimeout(60);
     continue;
   }
   const opt = page.locator('.option').first();
-  if (await opt.count()) { await opt.click(); await page.waitForTimeout(20); }
-  else if (await page.locator('.receipt').count()) { await page.locator('.receipt').first().click(); await page.waitForTimeout(20); }
-  else if (await page.locator('.banner').count()) { await page.locator('.banner').first().click(); await page.waitForTimeout(20); }
+  if (await opt.count() && await opt.isVisible().catch(() => false)) { await opt.click(); await page.waitForTimeout(20); }
+  else if (await page.locator('.receipt').first().isVisible().catch(() => false)) { await page.locator('.receipt').first().click(); await page.waitForTimeout(20); }
+  else if (await page.locator('.banner').first().isVisible().catch(() => false)) { await page.locator('.banner').first().click(); await page.waitForTimeout(20); }
+  else if (await page.locator('.upgrade-list').first().isVisible().catch(() => false)) { await page.locator('button:has-text("完成升级")').click(); await page.waitForTimeout(20); }
   else { await page.keyboard.press('Enter'); await page.waitForTimeout(20); }
   clicks2++;
 }

@@ -262,6 +262,10 @@ function careerHTML() {
   if (s.season && !s.season.done) {
     return seasonHTML(s);
   }
+  // 季后赛进行中
+  if (s.playoffs && !s.playoffs.done) {
+    return playoffsHTML(s);
+  }
   // 赛季总结
   if (app.seasonSummary) {
     body = seasonSummaryHTML(app.seasonSummary);
@@ -378,11 +382,86 @@ function seasonSummaryHTML(sum) {
       <div class="label" style="margin-top:12px">个人奖项</div>
       <div class="ss-awards">${awardChips}</div>
       ${sum.highlight ? `<div class="ss-highlight">🔥 ${esc(sum.highlight)}</div>` : ''}
+      ${sum.growthPoints ? `<div class="ss-growth">📈 本季成长点数 <b>+${sum.growthPoints}</b>（累计 ${sum.growthBank || 0}）</div>` : ''}
+      ${sum.salary ? `<div class="ss-growth">💰 本季年薪 <b>${E.fmtMoney(sum.salary)}</b>${sum.contractLeft ? ` · 合同剩 ${sum.contractLeft} 年` : ''}</div>` : ''}
       <div style="height:14px"></div>
-      <button class="btn btn-primary btn-lg btn-block" onclick="BL.dismissSeasonSummary()">继续 →</button>
+      ${sum.growthPoints ? `<button class="btn btn-primary btn-lg btn-block" style="margin-bottom:8px" onclick="BL.openUpgrade()">📈 升级属性（${sum.growthBank || 0} 点）</button>` : ''}
+      <button class="btn btn-outline btn-lg btn-block" onclick="BL.dismissSeasonSummary()">继续 →</button>
       <div style="height:24px"></div>
     </div>
   `;
+}
+
+// ---------- 属性升级 ----------
+function upgradeHTML() {
+  const s = app.state;
+  if (!s) return '';
+  const points = s.player.growthBank || 0;
+  // 确保 attrs 存在
+  const attrs = s.player.attrs || fallbackAttrs(s.player.overall);
+  const rows = ATTR_LIST.map(({ key, zh, icon }) => {
+    const val = attrs[key] || 60;
+    return `<div class="upgrade-row">
+      <span class="up-icon">${icon}</span>
+      <span class="up-name">${zh}</span>
+      <span class="up-val num">${val}</span>
+      <button class="btn btn-primary btn-sm" onclick="BL.upgradeAttr('${key}')">+</button>
+    </div>`;
+  }).join('');
+  return shell(`
+    <div class="page-head">
+      <button class="btn btn-ghost" onclick="BL.closeUpgrade()">← 返回</button>
+      <h2>成长升级</h2>
+      <span class="count">${points} 点</span>
+    </div>
+    <div class="scroll">
+      <div class="upgrade-hint">每赛季获得的成长点数可分配给你的属性，属性影响比赛表现。</div>
+      <div class="upgrade-list">${rows}</div>
+      <div style="height:14px"></div>
+      <button class="btn btn-primary btn-lg btn-block" onclick="BL.closeUpgrade()">完成升级 →</button>
+      <div style="height:24px"></div>
+    </div>
+  `);
+}
+
+// ---------- 季后赛 ----------
+function playoffsHTML(s) {
+  const po = s.playoffs;
+  const team = TEAMS[s.currentTeamId] || NCAA_TEAMS[s.currentTeamId] || null;
+  const opp = TEAMS[po.currentOppId] || NCAA_TEAMS[po.currentOppId] || null;
+  const roundNames = ['首轮', '分区半决赛', '总决赛'];
+  const roundName = roundNames[po.round] || `第${po.round + 1}轮`;
+  const recent = po.games.slice(-6).reverse().map(g => `
+    <div class="season-game ${g.win ? 'win' : 'lose'}">
+      <span class="sg-r">${g.home ? '主' : '客'}${g.win ? ' W' : ' L'}</span>
+      <span class="sg-opp">${esc(g.opp)}</span>
+      <span class="sg-score num">${g.myScore} : ${g.oppScore}</span>
+      <span class="sg-me num">我 ${g.my.pts}分</span>
+    </div>`).join('') || '<div class="empty">系列赛还没开打</div>';
+  return shell(`
+    ${topbarHTML()}
+    <div class="scroll" style="padding-top:6px">
+      <div class="playoffs-top">
+        <div class="po-title">🏆 季后赛 · ${roundName}</div>
+        <div class="po-series">
+          <div class="po-team">${esc(team ? team.zh : '')}</div>
+          <div class="po-score num">${po.myWins} : ${po.oppWins}</div>
+          <div class="po-team">${esc(opp ? opp.zh : '对手')}</div>
+        </div>
+        <div class="po-best">BO7 · 先赢 4 场晋级</div>
+      </div>
+
+      <div class="label" style="margin-top:12px">系列赛比分</div>
+      <div class="season-games">${recent}</div>
+
+      <div class="season-actions">
+        <button class="btn btn-primary" onclick="BL.simPlayoff(1)">▶ 模拟 1 场</button>
+        <button class="btn btn-primary" onclick="BL.simPlayoff(3)">⏩ 模拟 3 场</button>
+        <button class="btn btn-outline" onclick="BL.simPlayoffAll()">快进本轮</button>
+      </div>
+      <div style="height:24px"></div>
+    </div>
+  `);
 }
 
 function bannerHTML(snapshot) {
@@ -1305,6 +1384,7 @@ function render() {
   else if (app.view === 'archive') root.innerHTML = archiveHTML();
   else if (app.view === 'archive-detail') root.innerHTML = archiveDetailHTML();
   else if (app.view === 'gallery') root.innerHTML = galleryHTML();
+  else if (app.view === 'upgrade') root.innerHTML = upgradeHTML();
   if (app.view === prevView) {
     requestAnimationFrame(() => {
       const el = document.querySelector('.app > .scroll');
@@ -1339,6 +1419,11 @@ window.BL = {
     app.lastBanner = null;
     // 赛季进行中：直接显示赛季页（careerHTML 处理）
     if (st.phase === 'career' && st.season && !st.season.done) {
+      render();
+      return;
+    }
+    // 季后赛进行中
+    if (st.phase === 'career' && st.playoffs && !st.playoffs.done) {
       render();
       return;
     }
@@ -1602,13 +1687,30 @@ window.BL = {
     app.seasonSummary = null;
     render();
   },
+  // ---------- 属性升级 ----------
+  openUpgrade() {
+    app.view = 'upgrade';
+    render();
+  },
+  closeUpgrade() {
+    app.view = 'career';
+    app.seasonSummary = null;
+    render();
+  },
+  upgradeAttr(key) {
+    if (!app.state) return;
+    const res = E.upgradeAttr(app.state, key, 1);
+    if (!res.ok) { toast(res.reason); return; }
+    E.saveState(app.state);
+    render();
+  },
   // ---------- 逐场赛季 ----------
   simGames(n) {
     if (!app.state || !app.state.season) return;
     E.simNextGames(app.state, n);
-    // 赛季打完则直接结算
+    // 赛季打完则推进
     if (app.state.season && app.state.season.done) {
-      BL.finishSeasonNow();
+      BL.advanceAfterRegularSeason();
       return;
     }
     E.saveState(app.state);
@@ -1619,10 +1721,67 @@ window.BL = {
     const remain = app.state.season.totalGames - app.state.season.played;
     E.simNextGames(app.state, remain);
     if (app.state.season && app.state.season.done) {
-      BL.finishSeasonNow();
+      BL.advanceAfterRegularSeason();
       return;
     }
     E.saveState(app.state);
+    render();
+  },
+  // 常规赛打完：让 step 决定进季后赛还是直接结算
+  advanceAfterRegularSeason() {
+    if (!app.state) return;
+    const { state, screen, snapshot } = E.step(app.state);
+    app.state = state;
+    if (screen === 'playoffs') {
+      E.saveState(state);
+      render();
+      return;
+    }
+    // 直接结算（未进季后赛）
+    if (state.lastSeasonSummary) app.seasonSummary = state.lastSeasonSummary;
+    if (screen === 'banner') {
+      app.lastBanner = snapshot;
+      app.pendingBanner = !!state.currentEvent;
+    }
+    if (screen === 'summary') { app.view = 'summary'; app.archived = false; }
+    E.saveState(state);
+    render();
+  },
+  // ---------- 季后赛 ----------
+  simPlayoff(n) {
+    if (!app.state || !app.state.playoffs) return;
+    E.simPlayoffGames(app.state, n);
+    if (app.state.playoffs && app.state.playoffs.done) {
+      BL.finishPlayoffs();
+      return;
+    }
+    E.saveState(app.state);
+    render();
+  },
+  simPlayoffAll() {
+    if (!app.state || !app.state.playoffs) return;
+    E.simPlayoffGames(app.state, 7);
+    if (app.state.playoffs && app.state.playoffs.done) {
+      BL.finishPlayoffs();
+      return;
+    }
+    E.saveState(app.state);
+    render();
+  },
+  finishPlayoffs() {
+    if (!app.state) return;
+    app.receipt = false;
+    app.pendingBanner = false;
+    app.lastBanner = null;
+    const { state, screen, snapshot } = E.step(app.state);
+    app.state = state;
+    if (state.lastSeasonSummary) app.seasonSummary = state.lastSeasonSummary;
+    if (screen === 'banner') {
+      app.lastBanner = snapshot;
+      app.pendingBanner = !!state.currentEvent;
+    }
+    if (screen === 'summary') { app.view = 'summary'; app.archived = false; }
+    E.saveState(state);
     render();
   },
   finishSeasonNow() {

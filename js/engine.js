@@ -301,6 +301,53 @@ export function salaryOf(marketValue, role) {
   return Math.round(marketValue * ratio);
 }
 
+// NBA 风格年薪（单位：万人民币，1 美元 ≈ 7 元）
+// 顶薪 ≈ 5000 万美元 ≈ 35000 万，中产 ≈ 1000 万刀 ≈ 7000 万，底薪 ≈ 200 万刀 ≈ 1400 万
+export function nbaSalaryOf(overall, role, league) {
+  const tierFactor = { 1: 1.0, 2: 0.6, 3: 0.28, 4: 0.14 }[league && league.tier] ?? 0.2;
+  let base;
+  if (overall >= 96) base = 5200;       // 超级巨星顶薪（万美元）
+  else if (overall >= 92) base = 4400;  // 顶薪
+  else if (overall >= 88) base = 3400;  // 准顶薪
+  else if (overall >= 84) base = 2600;  // 优质首发
+  else if (overall >= 80) base = 1900;  // 首发
+  else if (overall >= 75) base = 1200;  // 轮换
+  else if (overall >= 68) base = 600;   // 角色
+  else base = 280;                      // 底薪/边缘
+  const roleFactor = { edge: 0.7, rotation: 0.9, starter: 1.0, star: 1.15, superstar: 1.3 }[role] ?? 0.9;
+  return Math.round(base * roleFactor * tierFactor * 7); // 万人民币
+}
+
+// 合同：初始签约（金额万美元/年，年限 2-5 年）
+export function makeContract(player, team, league) {
+  const role = 'starter';
+  const years = player.overall >= 85 ? 5 : player.overall >= 75 ? 4 : player.overall >= 68 ? 3 : 2;
+  return {
+    teamId: team.id,
+    years,
+    yearsLeft: years,
+    annualUsd: Math.round(nbaSalaryOf(player.overall, role, league) / 7), // 存万美元
+    startAge: player.age,
+    extension: false,
+  };
+}
+
+// 续约/新签：按当前能力给下一份合同
+export function renewContract(state, team, league) {
+  const role = roleFor(state, team, state.player.age, {});
+  const annual = nbaSalaryOf(state.player.overall, role, league);
+  const years = state.player.overall >= 88 ? 5 : state.player.overall >= 75 ? 4 : 3;
+  state.player.contract = {
+    teamId: team.id,
+    years,
+    yearsLeft: years,
+    annualUsd: Math.round(annual / 7),
+    startAge: state.player.age,
+    extension: true,
+  };
+  return state.player.contract;
+}
+
 // ---------- 事件池 ----------
 function youthEvents() {
   return Object.values(EVENTS).filter(e => e.minAge <= 17);
@@ -609,10 +656,11 @@ function runDraft(state) {
   state.contractTeamId = team.id;
   state.stage = 'pro';
   state.pendingGame = null;
+  state.player.contract = makeContract(state.player, team, LEAGUES.nba);
   state.lastEventOutcome = {
     eventKey: 'draft_choice',
     optionKey: 'declare',
-    text: `选秀大会第 ${pick} 顺位，${team.zh} 选中了你！`,
+    text: `选秀大会第 ${pick} 顺位，${team.zh} 选中了你！签下新秀合同。`,
     kind: 'positive',
   };
   state.legacyLines.push(`第 ${pick} 顺位，你被 ${team.zh} 选中。`);
@@ -760,7 +808,18 @@ function simulateSeason(state, team, age, modifiers) {
   if (cup === 'cup_champion') trophies.push(`cup:${team.league}`);
 
   const marketValue = marketValueOf(player.overall, age, league);
-  const salary = salaryOf(marketValue, role) * (modifiers.salaryMult || 1);
+  // 薪资：优先用合同年薪，无合同则按能力估
+  let salary;
+  if (player.contract && player.contract.teamId === team.id) {
+    // 合同按年限递增（新秀合同前几年低，之后涨）
+    const contractYears = player.contract.years || 1;
+    const progress = contractYears - (player.contract.yearsLeft || 0);
+    const grow = 1 + progress * 0.08;
+    salary = (player.contract.annualUsd || 1000) * 7 * grow * (modifiers.salaryMult || 1);
+  } else {
+    salary = nbaSalaryOf(player.overall, role, league) * (modifiers.salaryMult || 1);
+  }
+  salary = Math.round(salary);
 
   // 赛季结束后的能力成长/下滑
   const dev = develop(player, age, rng);
@@ -799,6 +858,33 @@ function simulateSeason(state, team, age, modifiers) {
 
   state.rngState = (rng() * 4294967296) >>> 0 || 12345;
   return { snapshot, rng };
+}
+
+// ---------- 属性升级 ----------
+const ATTR_KEYS = ['threePT', 'MID', 'FIN', 'DNK', 'HAN', 'PAS', 'PDEF', 'IDEF', 'BLK', 'REB', 'ATH', 'STR', 'CLU'];
+export function upgradeAttr(state, key, points = 1) {
+  const bank = state.player.growthBank || 0;
+  if (bank < points) return { ok: false, reason: '点数不足' };
+  if (!ATTR_KEYS.includes(key)) return { ok: false, reason: '未知属性' };
+  const attrs = state.player.attrs || (state.player.attrs = fallbackAttrs(state.player.overall));
+  const cur = attrs[key] || 60;
+  if (cur >= 99) return { ok: false, reason: '已到上限' };
+  attrs[key] = Math.min(99, cur + points);
+  state.player.growthBank = bank - points;
+  // 重算 overall：13 项平均 + 少量位置权重
+  state.player.overall = Math.min(99, Math.round(
+    ATTR_KEYS.reduce((s, k) => s + (attrs[k] || 60), 0) / ATTR_KEYS.length + 6
+  ));
+  return { ok: true, attrs, overall: state.player.overall, bank: state.player.growthBank };
+}
+
+function fallbackAttrs(ovr) {
+  const o = ovr || 70;
+  return {
+    threePT: o - 8, MID: o - 5, FIN: o - 3, DNK: o - 6, HAN: o - 3,
+    PAS: o - 4, PDEF: o - 5, IDEF: o - 5, BLK: o - 9, REB: o - 6,
+    ATH: o - 3, STR: o - 4, CLU: o - 3,
+  };
 }
 
 // ---------- 逐场赛季状态机 ----------
@@ -1008,6 +1094,70 @@ function buildBoxScore(roster, teamScore, me, rng, isHome) {
   return box;
 }
 
+// ---------- 季后赛状态机 ----------
+export function beginPlayoffs(state, team) {
+  const season = state.season;
+  const winPct = season.totalGames > 0 ? season.wins / season.totalGames : 0;
+  // 对手：同联赛按 strength 排名，取比我们强或接近的对手
+  const league = LEAGUES[team.league];
+  const opps = Object.values(TEAMS).filter(t => t.league === team.league && t.id !== team.id)
+    .sort((a, b) => b.strength - a.strength);
+  const opp = opps[0] || Object.values(TEAMS).find(t => t.id !== team.id);
+  const rounds = [];
+  // 简化：3 轮（首轮/分区决赛/总决赛），每轮对手强度递增
+  for (let r = 0; r < 3; r++) {
+    const idx = Math.min(r + (winPct >= 0.7 ? r : r + 1), opps.length - 1);
+    rounds.push(opps[idx] ? opps[idx].id : opp.id);
+  }
+  state.playoffs = {
+    round: 0,
+    rounds,
+    myWins: 0,
+    oppWins: 0,
+    currentOppId: rounds[0],
+    games: [],
+    done: false,
+    eliminated: false,
+  };
+  return state.playoffs;
+}
+
+export function simPlayoffGames(state, n = 1) {
+  const po = state.playoffs;
+  if (!po || po.done) return [];
+  const out = [];
+  const season = state.season;
+  const teamTable = season && season.kind === 'ncaa' ? NCAA_TEAMS : TEAMS;
+  const myTeam = teamTable[season.teamId];
+  const rng = mulberry32(state.rngState ^ 0x7a7a);
+  for (let k = 0; k < n && !po.done; k++) {
+    const opp = teamTable[po.currentOppId];
+    const game = simOneLeagueGame(state, season, myTeam, opp, k % 2 === 0, rng);
+    po.games.push(game);
+    if (game.win) po.myWins += 1; else po.oppWins += 1;
+    out.push(game);
+    if (po.myWins >= 4 || po.oppWins >= 4) {
+      // 一轮结束
+      if (po.myWins >= 4) {
+        po.round += 1;
+        po.myWins = 0;
+        po.oppWins = 0;
+        if (po.round >= po.rounds.length) {
+          po.done = true; // 夺冠
+          po.champion = true;
+        } else {
+          po.currentOppId = po.rounds[po.round];
+        }
+      } else {
+        po.done = true;
+        po.eliminated = true;
+      }
+    }
+  }
+  state.rngState = (rng() * 4294967296) >>> 0 || 12345;
+  return out;
+}
+
 // 赛季结束：应用成长，返回最终 snapshot（stats 用实际累计场均）
 export function finishSeason(state) {
   const season = state.season;
@@ -1033,28 +1183,47 @@ export function finishSeason(state) {
   };
   // 应用成长
   state.player.overall = plan.overall;
-  // 按实际战绩修正季后赛结果：胜率越高，最差成绩越好
+  // 结果：季后赛打完则用真实结果；NCAA/未进季后赛保留 plan.result（或修正）
   const winPct = season.totalGames > 0 ? season.wins / season.totalGames : 0;
   let result = plan.result;
-  const tiers = ['missed', 'playoffs', 'quarters', 'semis', 'final', 'champion'];
-  const curIdx = tiers.indexOf(result && result.league);
-  let floorIdx = curIdx >= 0 ? curIdx : 0;
-  if (winPct >= 0.75) floorIdx = Math.max(floorIdx, 4);       // ≥75% 至少总决赛
-  else if (winPct >= 0.68) floorIdx = Math.max(floorIdx, 3);   // ≥68% 至少四强
-  else if (winPct >= 0.6) floorIdx = Math.max(floorIdx, 2);    // ≥60% 至少八强
-  else if (winPct >= 0.5) floorIdx = Math.max(floorIdx, 1);    // ≥50% 至少季后赛
-  if (floorIdx > curIdx) result = { league: tiers[floorIdx] };
+  const po = state.playoffs;
+  if (po && po.done) {
+    if (po.champion) result = { league: 'champion' };
+    else if (po.eliminated) {
+      // 在某一轮被淘汰：round 0=首轮出局, 1=半决赛, 2=总决赛
+      const rnd = po.round;
+      result = { league: rnd === 0 ? 'quarters' : rnd === 1 ? 'semis' : 'final' };
+    }
+  } else if (season.kind === 'pro' && !po) {
+    // 职业未进季后赛：missed
+    result = { league: 'missed' };
+  }
+  // 保留 NCAA 的 plan.result 不动
   // 高光：用实际场均判断
   let highlight = plan.highlight;
   if (g > 0) {
     if (avg.pts >= 30) highlight = `单赛季场均 ${avg.pts.toFixed(1)} 分`;
     else if (avg.pts >= 24 && avg.reb >= 10 && avg.ast >= 10) highlight = `单赛季场均 ${avg.pts.toFixed(1)} 分 ${avg.reb.toFixed(1)} 板 ${avg.ast.toFixed(1)} 助`;
   }
-  // 冠军奖杯按修正后的结果
+  // 冠军奖杯按结果
   const trophies = [...plan.trophies];
   if (result.league === 'champion' && !trophies.includes(`league:${plan.leagueId}`)) {
     trophies.push(`league:${plan.leagueId}`);
   }
+  // 决赛冠军额外 FMVP
+  const awards = [...plan.awards];
+  if (result.league === 'champion' && !awards.includes('fmvp') && state.player.overall >= 84) {
+    awards.push('fmvp');
+  }
+  // 成长点数：赛季表现越好点数越多，年轻球员成长快
+  const perf = g > 0 ? (avg.pts + avg.reb * 0.6 + avg.ast * 0.6) : 0;
+  const ageBonus = state.player.age <= 23 ? 4 : state.player.age <= 27 ? 3 : state.player.age <= 31 ? 2 : state.player.age <= 35 ? 1 : 0;
+  const awardBonus = awards.length * 1;
+  const winBonus = season.wins >= season.totalGames * 0.6 ? 2 : 0;
+  const growthPoints = Math.max(0, 4 + Math.floor(perf / 12) + ageBonus + awardBonus + winBonus);
+  state.lastGrowthPoints = growthPoints;
+  state.player.growthBank = (state.player.growthBank || 0) + growthPoints;
+
   const snapshot = {
     ...plan,
     stats,
@@ -1062,8 +1231,9 @@ export function finishSeason(state) {
     highlight,
     result,
     trophies,
+    awards,
+    growthPoints,
     record: { wins: season.wins, losses: season.losses },
-    awards: plan.awards,
   };
   // 赛季总结（供 UI 展示）
   state.lastSeasonSummary = {
@@ -1078,8 +1248,12 @@ export function finishSeason(state) {
     stats: stats.avg,
     result,
     resultZh: resultZh(result && result.league, LEAGUES[plan.leagueId]),
-    awards: plan.awards,
+    awards,
     highlight,
+    growthPoints,
+    growthBank: state.player.growthBank,
+    salary: snapshot.salary,
+    contractLeft: state.player.contract ? state.player.contract.yearsLeft : null,
   };
   // 记录赛季总结
   state.seasonHistory = state.seasonHistory || [];
@@ -1090,10 +1264,16 @@ export function finishSeason(state) {
     record: `${season.wins}-${season.losses}`,
     stats: stats.avg,
     result,
-    awards: plan.awards,
+    awards,
   });
   state.season = null;
+  state.playoffs = null;
   return snapshot;
+}
+
+// 职业赛季完整结束（进季后赛流程后调用）：finishSeason + 清空季后赛，返回 snapshot 供结算
+function finishCareerSeason(state, team, age, modifiers) {
+  return finishSeason(state);
 }
 
 function develop(player, age, rng) {
@@ -1248,14 +1428,42 @@ export function step(state) {
     return { state, screen: 'season' };
   }
 
-  const { snapshot } = { snapshot: finishSeason(state) };
+  // 常规赛打完 → 决定是否进季后赛
+  if (!state.playoffs) {
+    // 胜率足够则进季后赛，否则直接结束
+    const winPct = state.season.totalGames > 0 ? state.season.wins / state.season.totalGames : 0;
+    const made = winPct >= 0.45 && state.season.losses < state.season.totalGames;
+    if (!made) {
+      // 未进季后赛，直接结算
+      const snapshot = finishCareerSeason(state, team, age, seasonModifiers);
+      if (!snapshot) {
+        state.phase = 'summary';
+        state.retirementReason = state.retirementReason || 'no_offers';
+        return { state, screen: 'summary' };
+      }
+      return settleSeasonResult(state, snapshot, team, age, seasonModifiers, suspended);
+    }
+    beginPlayoffs(state, team);
+    return { state, screen: 'playoffs' };
+  }
+
+  // 季后赛进行中
+  if (!state.playoffs.done) {
+    return { state, screen: 'playoffs' };
+  }
+
+  // 季后赛打完 → 结算赛季
+  const snapshot = finishCareerSeason(state, team, age, seasonModifiers);
   if (!snapshot) {
     state.phase = 'summary';
     state.retirementReason = state.retirementReason || 'no_offers';
     return { state, screen: 'summary' };
   }
+  return settleSeasonResult(state, snapshot, team, age, seasonModifiers, suspended);
+}
 
-  // 结算
+// 赛季结算：累加 totals、宿敌、国家队、事件调度等，返回 banner
+function settleSeasonResult(state, snapshot, team, age, modifiers, suspended) {
   const t = state.totals;
   t.apps += snapshot.stats.g;
   t.pts += snapshot.stats.pts;
@@ -1373,6 +1581,24 @@ export function step(state) {
     state.period = { ...state.period, run: 0, modifiers: {} };
     const ev = scheduleNextEvent(state);
     if (ev) state.currentEvent = ev;
+  }
+
+  // 合同推进：每赛季消耗一年，到期自动续约
+  if (state.player.contract) {
+    state.player.contract.yearsLeft = Math.max(0, (state.player.contract.yearsLeft || 1) - 1);
+    if (state.player.contract.yearsLeft <= 0) {
+      // 合同到期：留在当前队则续约
+      renewContract(state, team, LEAGUES[team.league]);
+      state.legacyLines.push(`${state.player.age} 岁，你和${team.zh}签下了一份新合同。`);
+      state.lastEventOutcome = {
+        eventKey: 'contract_renew',
+        optionKey: 'renew',
+        text: `赛季结束，${team.zh} 与你续约 ${state.player.contract.years} 年（年薪 ${fmtMoney(state.player.contract.annualUsd * 7)}）。`,
+        kind: 'positive',
+      };
+    }
+  } else {
+    renewContract(state, team, LEAGUES[team.league]);
   }
 
   return { state, screen: 'banner', snapshot };
@@ -1550,7 +1776,8 @@ export function decide(state, optionId) {
     state.stage = 'pro';
     const team = TEAMS[opt.teamId];
     state.player.marketValue = marketValueOf(state.player.overall, state.player.age, LEAGUES[team.league]);
-    state.lastEventOutcome = { eventKey: 'sign_contract', optionKey: opt.teamId, text: `你穿上了${team.zh}的球衣。`, kind: 'positive' };
+    state.player.contract = makeContract(state.player, team, LEAGUES[team.league]);
+    state.lastEventOutcome = { eventKey: 'sign_contract', optionKey: opt.teamId, text: `你穿上了${team.zh}的球衣，签下 ${state.player.contract.years} 年合同。`, kind: 'positive' };
     state.step += 1;
     state.currentEvent = null;
     return { state, screen: 'career' };
@@ -1564,10 +1791,11 @@ export function decide(state, optionId) {
     state.contractTeamId = team.id;
     const league = LEAGUES[team.league];
     state.player.marketValue = marketValueOf(state.player.overall, state.player.age, league);
+    state.player.contract = makeContract(state.player, team, league);
     if (team.id === state.player.foreignDreamTeamId || team.id === state.player.domesticDreamTeamId) {
       state.legacyLines.push(`你穿上了儿时主队${team.zh}的球衣。`);
     }
-    state.lastEventOutcome = { eventKey: 'transfer', optionKey: team.id, text: `你加盟了${team.zh}。`, kind: 'positive' };
+    state.lastEventOutcome = { eventKey: 'transfer', optionKey: team.id, text: `你加盟了${team.zh}，签下 ${state.player.contract.years} 年合同。`, kind: 'positive' };
     state.step += 1;
     state.currentEvent = null;
     state.pendingTransfer = null;
