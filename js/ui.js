@@ -308,14 +308,23 @@ function seasonHTML(s) {
     stl: (season.myStats.stl / season.myStats.g).toFixed(1),
     blk: (season.myStats.blk / season.myStats.g).toFixed(1),
   } : { pts: '0', reb: '0', ast: '0', stl: '0', blk: '0' };
-  // 最近比赛
-  const recent = season.games.slice(-5).reverse().map(g => `
-    <div class="season-game ${g.win ? 'win' : 'lose'}">
+  // 最近比赛（可点击查看双方 box）
+  const recent = season.games.slice(-8).reverse().map((g, i) => `
+    <button class="season-game ${g.win ? 'win' : 'lose'}" onclick="BL.viewGameBox(${season.played - i - 1})">
       <span class="sg-r">${g.home ? '主' : '客'}${g.win ? ' W' : ' L'}</span>
       <span class="sg-opp">${esc(g.opp)}</span>
       <span class="sg-score num">${g.myScore} : ${g.oppScore}</span>
       <span class="sg-me num">我 ${g.my.pts}分</span>
-    </div>`).join('') || '<div class="empty">还没开打</div>';
+    </button>`).join('') || '<div class="empty">还没开打</div>';
+  // 队友列表（点击查看能力值/场均）
+  const mates = E.getMyRoster(s).filter(p => !p.isMe);
+  const matesHTML = mates.map((p, i) => `
+    <button class="mate-row" onclick="BL.viewMate(${i})">
+      <span class="mt-pos">${p.pos}</span>
+      <span class="mt-name">${esc(p.name)}</span>
+      <span class="mt-ovr num">${p.ovr}</span>
+      <span class="mt-avg num">${p.avg.pts}分 ${p.avg.reb}板</span>
+    </button>`).join('');
 
   return shell(`
     ${topbarHTML()}
@@ -338,8 +347,11 @@ function seasonHTML(s) {
         <div><div class="num">${myAvg.blk}</div><div class="lab">盖帽</div></div>
       </div>
 
-      <div class="label" style="margin-top:12px">最近比赛</div>
+      <div class="label" style="margin-top:12px">最近比赛 <span class="muted-2">（点开看双方技术统计）</span></div>
       <div class="season-games">${recent}</div>
+
+      <div class="label" style="margin-top:12px">队友 <span class="muted-2">（点开看能力值/场均）</span></div>
+      ${matesHTML ? `<div class="mate-list">${matesHTML}</div>` : '<div class="empty">暂无队友数据</div>'}
 
       <div class="season-actions">
         <button class="btn btn-primary" onclick="BL.simGames(1)">▶ 模拟 1 场</button>
@@ -348,19 +360,73 @@ function seasonHTML(s) {
       </div>
       <div style="height:24px"></div>
     </div>
+    ${app.modal ? modalHTML() : ''}
   `);
+}
+
+// 单场技术统计（modal）
+function gameBoxHTML(game, teamZh) {
+  const rows = (box) => box.map(p => `
+    <tr class="${p.isMe ? 'me' : ''}">
+      <td>${p.isMe ? '⭐ ' : ''}${esc(p.name)}</td>
+      <td>${p.pos}</td>
+      <td>${p.pts}</td><td>${p.reb}</td><td>${p.ast}</td><td>${p.stl}</td><td>${p.blk}</td>
+    </tr>`).join('');
+  return `
+    <div class="modal-mask" onclick="if(event.target===this)BL.closeModal()">
+      <div class="modal modal-wide">
+        <div class="close-row"><button class="btn btn-ghost" onclick="BL.closeModal()">✕</button></div>
+        <div class="gb-head">
+          <span class="gb-team">${esc(teamZh)}</span>
+          <span class="gb-score num">${game.myScore} : ${game.oppScore}</span>
+          <span class="gb-team">${esc(game.opp)}</span>
+          <div class="gb-result ${game.win ? 'win' : 'lose'}">${game.win ? '🏆 胜' : '💔 负'} · 第${game.g}场</div>
+        </div>
+        <div class="label">${esc(teamZh)} 技术统计</div>
+        <table class="box-table"><thead><tr><th>球员</th><th>位</th><th>分</th><th>板</th><th>助</th><th>抢</th><th>帽</th></tr></thead><tbody>${rows(game.homeBox)}</tbody></table>
+        <div class="label" style="margin-top:10px">${esc(game.opp)} 技术统计</div>
+        <table class="box-table"><thead><tr><th>球员</th><th>位</th><th>分</th><th>板</th><th>助</th><th>抢</th><th>帽</th></tr></thead><tbody>${rows(game.awayBox)}</tbody></table>
+      </div>
+    </div>`;
+}
+
+// 队友详情（modal）
+function mateDetailHTML(mate) {
+  const attrHTML = ATTR_LIST.map(({ key, zh, icon }) => `
+    <div class="attr-cell">
+      <div class="a-icon">${icon}</div>
+      <div class="a-zh">${zh}</div>
+      <div class="a-val num">${mate.attrs[key] || '—'}</div>
+    </div>`).join('');
+  return `
+    <div class="modal-mask" onclick="if(event.target===this)BL.closeModal()">
+      <div class="modal modal-wide">
+        <div class="close-row"><button class="btn btn-ghost" onclick="BL.closeModal()">✕</button></div>
+        <div class="mate-head">
+          <div class="mt-pos">${mate.pos}</div>
+          <div class="mt-name">${esc(mate.name)}</div>
+          <div class="mt-ovr num">OVR ${mate.ovr}</div>
+          <div class="mt-starter">${mate.starter ? '首发' : '替补'}</div>
+        </div>
+        <div class="label" style="margin-top:12px">本季场均</div>
+        <div class="season-avg">
+          <div><div class="num">${mate.avg.pts}</div><div class="lab">得分</div></div>
+          <div><div class="num">${mate.avg.reb}</div><div class="lab">篮板</div></div>
+          <div><div class="num">${mate.avg.ast}</div><div class="lab">助攻</div></div>
+          <div><div class="num">${mate.avg.stl}</div><div class="lab">抢断</div></div>
+          <div><div class="num">${mate.avg.blk}</div><div class="lab">盖帽</div></div>
+        </div>
+        <div class="label" style="margin-top:12px">能力值</div>
+        <div class="attr-grid">${attrHTML}</div>
+      </div>
+    </div>`;
 }
 
 // ---------- 赛季总结 ----------
 function seasonSummaryHTML(sum) {
   const team = TEAMS[sum.teamId] || NCAA_TEAMS[sum.teamId] || null;
   const lg = LEAGUES[sum.leagueId];
-  const awardNames = {
-    allstar: '全明星', all_team: '最佳阵容', mvp: '常规赛MVP', fmvp: '总决赛MVP',
-    dpoy: '最佳防守', scoring_title: '得分王', rebound_title: '篮板王', assist_title: '助攻王',
-    allstar_mvp: '全明星MVP', dunk_king: '扣篮王', three_king: '三分王',
-  };
-  const awardChips = (sum.awards || []).map(a => `<span class="chip chip-green">🏅 ${awardNames[a] || a}</span>`).join('') || '<span class="muted-2">本赛季没有个人奖项</span>';
+  const awardChips = (sum.awards || []).map(a => `<span class="chip chip-green">🏅 ${E.awardZh(a)}</span>`).join('') || '<span class="muted-2">本赛季没有个人奖项</span>';
   return `
     <div class="season-summary">
       <div class="ss-head">
@@ -383,6 +449,13 @@ function seasonSummaryHTML(sum) {
       <div class="ss-awards">${awardChips}</div>
       ${sum.highlight ? `<div class="ss-highlight">🔥 ${esc(sum.highlight)}</div>` : ''}
       ${sum.growthPoints ? `<div class="ss-growth">📈 本季成长点数 <b>+${sum.growthPoints}</b>（累计 ${sum.growthBank || 0}）</div>` : ''}
+      ${sum.growthLog ? (() => {
+        const g = sum.growthLog;
+        const lines = [];
+        if (g.gains && g.gains.length) lines.push(...g.gains.map(x => `<span class="chip chip-green">▲ ${x}</span>`));
+        if (g.losses && g.losses.length) lines.push(...g.losses.map(x => `<span class="chip chip-red">▼ ${x}</span>`));
+        return `<div class="ss-growth">能力变化：${lines.join(' ') || '—'}</div>`;
+      })() : ''}
       ${sum.salary ? `<div class="ss-growth">💰 本季年薪 <b>${E.fmtMoney(sum.salary)}</b>${sum.contractLeft ? ` · 合同剩 ${sum.contractLeft} 年` : ''}</div>` : ''}
       <div style="height:14px"></div>
       ${sum.growthPoints ? `<button class="btn btn-primary btn-lg btn-block" style="margin-bottom:8px" onclick="BL.openUpgrade()">📈 升级属性（${sum.growthBank || 0} 点）</button>` : ''}
@@ -461,6 +534,7 @@ function playoffsHTML(s) {
       </div>
       <div style="height:24px"></div>
     </div>
+    ${app.modal ? modalHTML() : ''}
   `);
 }
 
@@ -1124,6 +1198,9 @@ function gameResultHTML() {
 function modalHTML() {
   const m = app.modal;
   if (!m) return '';
+  if (m.type === 'gamebox' || m.type === 'mate') {
+    return m.html || '';
+  }
   if (m.type === 'updates') {
     return `<div class="modal-mask" onclick="if(event.target===this)BL.closeModal()">
       <div class="modal">
@@ -1685,6 +1762,24 @@ window.BL = {
   },
   dismissSeasonSummary() {
     app.seasonSummary = null;
+    render();
+  },
+  viewGameBox(idx) {
+    if (!app.state || !app.state.season) return;
+    const game = app.state.season.games[idx];
+    if (!game) return;
+    const teamZh = app.state.season.kind === 'ncaa'
+      ? (NCAA_TEAMS[app.state.season.teamId]?.zh || '')
+      : (TEAMS[app.state.season.teamId]?.zh || '');
+    app.modal = { type: 'gamebox', html: gameBoxHTML(game, teamZh) };
+    render();
+  },
+  viewMate(i) {
+    if (!app.state) return;
+    const mates = E.getMyRoster(app.state).filter(p => !p.isMe);
+    const mate = mates[i];
+    if (!mate) return;
+    app.modal = { type: 'mate', html: mateDetailHTML(mate) };
     render();
   },
   // ---------- 属性升级 ----------

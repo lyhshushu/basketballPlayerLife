@@ -887,6 +887,44 @@ function fallbackAttrs(ovr) {
   };
 }
 
+export function recalcOverall(state) {
+  const attrs = state.player.attrs || fallbackAttrs(state.player.overall);
+  state.player.overall = Math.min(99, Math.round(
+    ATTR_KEYS.reduce((s, k) => s + (attrs[k] || 60), 0) / ATTR_KEYS.length + 6
+  ));
+  return state.player.overall;
+}
+
+// 属性年成长：年轻时随机提升 2-4 项属性，35 岁后逐年随机减少（随年龄加重）
+function annualAttributeGrowth(state, age) {
+  const attrs = state.player.attrs || (state.player.attrs = fallbackAttrs(state.player.overall));
+  const log = { age, gains: [], losses: [] };
+  const rng = mulberry32((state.rngState || 12345) ^ 0xabcd);
+  let n, deltaMin, deltaMax;
+  if (age <= 24) { n = 3 + Math.floor(rng() * 2); deltaMin = 1; deltaMax = 3; }        // 成长爆发期
+  else if (age <= 28) { n = 2 + Math.floor(rng() * 2); deltaMin = 1; deltaMax = 2; }   // 上升期
+  else if (age <= 31) { n = 1 + Math.floor(rng() * 2); deltaMin = 1; deltaMax = 2; }   // 巅峰期
+  else if (age <= 34) { n = 1 + Math.floor(rng() * 2); deltaMin = 0; deltaMax = 1; }   // 平稳期
+  else if (age <= 36) { n = 2 + Math.floor(rng() * 2); deltaMin = -1; deltaMax = -1; } // 下滑开始
+  else if (age <= 38) { n = 2 + Math.floor(rng() * 2); deltaMin = -2; deltaMax = -1; }
+  else { n = 3 + Math.floor(rng() * 2); deltaMin = -3; deltaMax = -1; }                // 末期
+  const keys = ATTR_KEYS.slice().sort(() => rng() - 0.5).slice(0, Math.min(n, ATTR_KEYS.length));
+  for (const k of keys) {
+    const cur = attrs[k] || 60;
+    const delta = deltaMin + Math.floor(rng() * (deltaMax - deltaMin + 1));
+    if (delta === 0) continue;
+    const next = clamp(cur + delta, 35, 99);
+    attrs[k] = next;
+    if (delta > 0) log.gains.push(`${k} +${delta}`);
+    else log.losses.push(`${k} ${delta}`);
+  }
+  // 重算 overall，受潜力约束
+  const avg = Math.round(ATTR_KEYS.reduce((s, k) => s + (attrs[k] || 60), 0) / ATTR_KEYS.length + 6);
+  const cap = Math.max(60, state.player.potential || 95);
+  state.player.overall = clamp(Math.min(avg, cap), 40, 99);
+  return log;
+}
+
 // ---------- 逐场赛季状态机 ----------
 // beginSeason: 赛季开始，预生成赛季计划（结果/奖项/场均目标/成长），生成赛程
 export function beginSeason(state, team, age, modifiers, kind = 'pro') {
@@ -963,7 +1001,8 @@ function makeSeasonRoster(state, team, rng) {
     const p = {
       name, pos: positions[i % 5], ovr,
       starter,
-      pts: 0, reb: 0, ast: 0, stl: 0, blk: 0,
+      attrs: attrsForOvr(ovr, positions[i % 5]),
+      g: 0, pts: 0, reb: 0, ast: 0, stl: 0, blk: 0,
     };
     roster.push(p);
   }
@@ -973,10 +1012,29 @@ function makeSeasonRoster(state, team, rng) {
     roster[0] = {
       name: state.player.name, pos: mePos, ovr: state.player.overall,
       starter: true, isMe: true,
-      pts: 0, reb: 0, ast: 0, stl: 0, blk: 0,
+      attrs: state.player.attrs || attrsForOvr(state.player.overall, mePos),
+      g: 0, pts: 0, reb: 0, ast: 0, stl: 0, blk: 0,
     };
   }
   return roster;
+}
+
+// 根据 OVR 和位置生成 13 项能力值
+const POS_ATTR_BIAS = {
+  PG: { threePT: 6, MID: 5, HAN: 8, PAS: 8, PDEF: 4, ATH: 4 },
+  SG: { threePT: 7, MID: 6, FIN: 3, HAN: 4, PAS: 3 },
+  SF: { threePT: 2, MID: 3, FIN: 5, DNK: 4, PDEF: 3, ATH: 4 },
+  PF: { MID: 1, FIN: 5, DNK: 5, IDEF: 5, BLK: 3, REB: 6, STR: 5 },
+  C: { FIN: 5, DNK: 4, IDEF: 7, BLK: 7, REB: 8, STR: 7, ATH: 2 },
+};
+function attrsForOvr(ovr, pos) {
+  const bias = POS_ATTR_BIAS[pos] || {};
+  const attrs = {};
+  for (const k of ATTR_KEYS) {
+    const b = bias[k] || 0;
+    attrs[k] = clamp(ovr - 8 + b + Math.floor(Math.random() * 7) - 3, 40, 99);
+  }
+  return attrs;
 }
 
 function surnamesForTeam(team) {
@@ -1066,18 +1124,16 @@ function teamPowerFor(role, team, player, plan) {
   return team.strength * 0.62 + player.overall * 0.38 + rf * 1.5;
 }
 
-// 生成一队 box（分数按 OVR 权重分配，保证总和与比分一致）
+// 生成一队 box（分数按 OVR 权重分配，保证总和与比分一致），并累计到 roster 赛季数据
 function buildBoxScore(roster, teamScore, me, rng, isHome) {
   if (!roster || !roster.length) return [];
   const totalOvr = roster.reduce((s, p) => s + p.ovr, 0);
-  let assigned = 0;
   const box = roster.map(p => {
     const share = totalOvr > 0 ? p.ovr / totalOvr : 1 / roster.length;
     let pts = Math.round(teamScore * share * (0.8 + rng() * 0.4));
     if (p.isMe) pts = me.overall >= 88 ? Math.round(teamScore * 0.3) : Math.round(teamScore * 0.22);
-    assigned += pts;
     const ovrF = p.ovr / 99;
-    return {
+    const line = {
       name: p.name, pos: p.pos, ovr: p.ovr, starter: p.starter, isMe: p.isMe,
       pts,
       reb: Math.round(ovrF * 8 + rng() * 6),
@@ -1085,12 +1141,24 @@ function buildBoxScore(roster, teamScore, me, rng, isHome) {
       stl: Math.round(ovrF * 2),
       blk: Math.round(ovrF * 2),
     };
+    return line;
   });
   // 修正总和到 teamScore
   const diff2 = teamScore - box.reduce((s, p) => s + p.pts, 0);
   if (box.length && Math.abs(diff2) > 0) {
     box[0].pts = Math.max(0, box[0].pts + diff2);
   }
+  // 累计到 roster 赛季数据（队友/对手场均）
+  box.forEach((b, i) => {
+    const p = roster[i];
+    if (!p) return;
+    p.g += 1;
+    p.pts += b.pts;
+    p.reb += b.reb;
+    p.ast += b.ast;
+    p.stl += b.stl;
+    p.blk += b.blk;
+  });
   return box;
 }
 
@@ -1159,6 +1227,35 @@ export function simPlayoffGames(state, n = 1) {
 }
 
 // 赛季结束：应用成长，返回最终 snapshot（stats 用实际累计场均）
+// 获取我队 roster（含场均数据），供队友面板/box 展示
+export function getMyRoster(state) {
+  const season = state.season;
+  if (!season) return [];
+  const teamTable = season.kind === 'ncaa' ? NCAA_TEAMS : TEAMS;
+  const team = teamTable[season.teamId];
+  if (!team) return [];
+  const roster = season.rosters.get(season.teamId) || [];
+  return roster.map(p => {
+    const g = p.g || 0;
+    return {
+      name: p.name,
+      pos: p.pos,
+      ovr: p.ovr,
+      starter: p.starter,
+      isMe: p.isMe,
+      attrs: p.attrs || {},
+      g,
+      avg: g > 0 ? {
+        pts: (p.pts / g).toFixed(1),
+        reb: (p.reb / g).toFixed(1),
+        ast: (p.ast / g).toFixed(1),
+        stl: (p.stl / g).toFixed(1),
+        blk: (p.blk / g).toFixed(1),
+      } : { pts: '0', reb: '0', ast: '0', stl: '0', blk: '0' },
+    };
+  });
+}
+
 export function finishSeason(state) {
   const season = state.season;
   if (!season) return null;
@@ -1181,8 +1278,9 @@ export function finishSeason(state) {
     blk: season.myStats.blk,
     avg,
   };
-  // 应用成长
-  state.player.overall = plan.overall;
+  // 属性年成长：年轻时随机提升，35 岁后逐年随机减少直至退役
+  const growthLog = annualAttributeGrowth(state, plan.age);
+  state.lastGrowthLog = growthLog;
   // 结果：季后赛打完则用真实结果；NCAA/未进季后赛保留 plan.result（或修正）
   const winPct = season.totalGames > 0 ? season.wins / season.totalGames : 0;
   let result = plan.result;
@@ -1215,12 +1313,14 @@ export function finishSeason(state) {
   if (result.league === 'champion' && !awards.includes('fmvp') && state.player.overall >= 84) {
     awards.push('fmvp');
   }
-  // 成长点数：赛季表现越好点数越多，年轻球员成长快
+  // 完整奖项：基于赛季数据判定（MVP/得分王/最佳阵容等）
+  const fullAwards = computeSeasonAwards(state, season, avg, result, awards);
+  // 成长点数：赛季表现越好点数越多，年轻球员成长快（适量）
   const perf = g > 0 ? (avg.pts + avg.reb * 0.6 + avg.ast * 0.6) : 0;
-  const ageBonus = state.player.age <= 23 ? 4 : state.player.age <= 27 ? 3 : state.player.age <= 31 ? 2 : state.player.age <= 35 ? 1 : 0;
-  const awardBonus = awards.length * 1;
+  const ageBonus = state.player.age <= 23 ? 3 : state.player.age <= 27 ? 2 : state.player.age <= 31 ? 1 : 0;
+  const awardBonus = Math.min(3, fullAwards.length);
   const winBonus = season.wins >= season.totalGames * 0.6 ? 2 : 0;
-  const growthPoints = Math.max(0, 4 + Math.floor(perf / 12) + ageBonus + awardBonus + winBonus);
+  const growthPoints = Math.max(0, 2 + Math.floor(perf / 18) + ageBonus + awardBonus + winBonus);
   state.lastGrowthPoints = growthPoints;
   state.player.growthBank = (state.player.growthBank || 0) + growthPoints;
 
@@ -1231,7 +1331,7 @@ export function finishSeason(state) {
     highlight,
     result,
     trophies,
-    awards,
+    awards: fullAwards,
     growthPoints,
     record: { wins: season.wins, losses: season.losses },
   };
@@ -1248,10 +1348,12 @@ export function finishSeason(state) {
     stats: stats.avg,
     result,
     resultZh: resultZh(result && result.league, LEAGUES[plan.leagueId]),
-    awards,
+    awards: fullAwards,
+    awardsDetail: fullAwards,
     highlight,
     growthPoints,
     growthBank: state.player.growthBank,
+    growthLog: state.lastGrowthLog || null,
     salary: snapshot.salary,
     contractLeft: state.player.contract ? state.player.contract.yearsLeft : null,
   };
@@ -1264,11 +1366,66 @@ export function finishSeason(state) {
     record: `${season.wins}-${season.losses}`,
     stats: stats.avg,
     result,
-    awards,
+    awards: fullAwards,
   });
   state.season = null;
   state.playoffs = null;
   return snapshot;
+}
+
+// 完整赛季奖项：基于赛季数据判定
+function computeSeasonAwards(state, season, avg, result, base) {
+  const awards = [];
+  const pos = state.player.position;
+  const ovr = state.player.overall;
+  const g = season.myStats.g;
+  const winPct = season.totalGames > 0 ? season.wins / season.totalGames : 0;
+  const a = avg;
+  const isRookie = (state.seasons || []).filter(s => !s.youth && s.teamId).length <= 1;
+
+  // 数据王
+  if (a.pts >= 26) awards.push('scoring_title');
+  if (a.reb >= 11) awards.push('rebound_title');
+  if (a.ast >= 9) awards.push('assist_title');
+  if (a.stl >= 2.2) awards.push('steal_title');
+  if (a.blk >= 2.2 && ['pf', 'c'].includes(pos)) awards.push('block_title');
+  // MVP：数据 + 战绩
+  if (ovr >= 86 && a.pts >= 24 && winPct >= 0.55) awards.push('mvp');
+  else if (a.pts >= 28 && winPct >= 0.6) awards.push('mvp');
+  // 最佳阵容：一阵/二阵/三阵（按综合表现）
+  const allNbaScore = a.pts + a.reb * 0.8 + a.ast * 0.8 + a.stl * 1.5 + a.blk * 1.5;
+  if (allNbaScore >= 42) awards.push('all_nba_1');
+  else if (allNbaScore >= 34) awards.push('all_nba_2');
+  else if (allNbaScore >= 27) awards.push('all_nba_3');
+  // 最佳防守阵容
+  const defScore = a.stl + a.blk + (ovr - 60) * 0.15;
+  if (defScore >= 6 && g >= 40) {
+    if (defScore >= 8) awards.push('all_def_1');
+    else awards.push('all_def_2');
+  }
+  // DPOY
+  if ((a.stl + a.blk) >= 4 && ovr >= 82 && g >= 40) awards.push('dpoy');
+  // 最佳新秀
+  if (isRookie && ovr >= 76 && a.pts >= 14) awards.push('roty');
+  // 最佳第六人（替补且数据好）
+  const role = season.plan.role;
+  if (['edge', 'rotation'].includes(role) && a.pts >= 16) awards.push('sixth_man');
+  // 进步最快（overall 增长大）
+  const prev = state.player.debutOverall || ovr;
+  if (ovr - prev >= 6) awards.push('mip');
+  // 全明星 / 全明星MVP
+  if (ovr >= 80 && a.pts >= 18) awards.push('allstar');
+  if (ovr >= 90 && a.pts >= 28 && season.kind === 'pro') awards.push('allstar_mvp');
+  // 总决赛相关
+  if (result.league === 'champion' && ovr >= 84) awards.push('fmvp');
+  if (result.league === 'champion') awards.push('champion_ring');
+
+  // 去重：去掉 base 中已被新体系替代的旧奖项，合并其余
+  const redundant = new Set(['all_team', 'allstar']);
+  const merged = new Set();
+  base.forEach(a => { if (!redundant.has(a)) merged.add(a); });
+  awards.forEach(a => merged.add(a));
+  return [...merged];
 }
 
 // 职业赛季完整结束（进季后赛流程后调用）：finishSeason + 清空季后赛，返回 snapshot 供结算
@@ -2205,12 +2362,23 @@ export function awardZh(id) {
   const map = {
     allstar: '全明星',
     all_team: '最佳阵容',
+    all_nba_1: '最佳阵容一阵',
+    all_nba_2: '最佳阵容二阵',
+    all_nba_3: '最佳阵容三阵',
+    all_def_1: '最佳防守一阵',
+    all_def_2: '最佳防守二阵',
+    roty: '最佳新秀',
     mvp: '常规赛MVP',
     fmvp: '总决赛MVP',
     dpoy: '最佳防守球员',
+    sixth_man: '最佳第六人',
+    mip: '进步最快球员',
+    champion_ring: '总冠军',
     scoring_title: '得分王',
     rebound_title: '篮板王',
     assist_title: '助攻王',
+    steal_title: '抢断王',
+    block_title: '盖帽王',
     tournament_mvp: '大赛MVP',
     tournament_all_team: '大赛最佳阵容',
     allstar_mvp: '全明星MVP',

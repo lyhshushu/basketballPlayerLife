@@ -792,3 +792,23 @@ select.team-select {
 .upgrade-row .up-val { font-size: 14px; font-weight: 900; color: var(--amber); min-width: 26px; text-align: right; }
 .btn-sm { padding: 6px 12px; font-size: 13px; }
 .ss-growth { margin-top: 10px; text-align: center; font-size: 12px; color: var(--accent-2); font-weight: 700; }
+/* ================= 队友 / 单场box ================= */
+.mate-list { display: grid; gap: 6px; }
+.mate-row { display: flex; align-items: center; gap: 10px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; width: 100%; color: var(--text); font-family: inherit; cursor: pointer; }
+.mate-row:hover { border-color: var(--accent); }
+.mate-row .mt-pos { font-size: 10px; font-weight: 900; color: var(--accent-2); min-width: 28px; }
+.mate-row .mt-name { flex: 1; font-size: 13px; font-weight: 800; text-align: left; }
+.mate-row .mt-ovr { font-size: 13px; font-weight: 900; color: var(--amber); }
+.mate-row .mt-avg { font-size: 11px; color: var(--text-2); font-weight: 700; }
+.modal-wide { max-width: 440px !important; width: 94% !important; }
+.gb-head { text-align: center; padding: 8px 0 12px; }
+.gb-team { font-size: 14px; font-weight: 900; }
+.gb-score { font-size: 30px; font-weight: 900; color: var(--amber); margin: 0 10px; }
+.gb-result { margin-top: 6px; font-size: 12px; font-weight: 800; }
+.gb-result.win { color: var(--accent-2); }
+.gb-result.lose { color: #f87171; }
+.mate-head { text-align: center; padding: 6px 0 8px; }
+.mate-head .mt-pos { font-size: 12px; font-weight: 900; color: var(--accent-2); }
+.mate-head .mt-name { font-size: 20px; font-weight: 900; margin-top: 2px; }
+.mate-head .mt-ovr { font-size: 22px; font-weight: 900; color: var(--amber); margin-top: 4px; }
+.mate-head .mt-starter { font-size: 11px; color: var(--text-3); margin-top: 2px; }
