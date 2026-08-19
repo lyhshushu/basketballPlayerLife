@@ -5432,6 +5432,19 @@ function toast(msg) {
   setTimeout(() => el.remove(), 1800);
 }
 
+// 自动关闭的居中大提示（用于夺冠/淘汰等）
+function showAutoToast(msg, duration = 4000) {
+  const el = document.createElement('div');
+  el.className = 'auto-toast';
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => {
+    el.classList.add('out');
+    setTimeout(() => el.remove(), 500);
+  }, duration);
+}
+window.__showAutoToast = showAutoToast;
+
 function shell(inner) {
   return `<div class="app">${inner}</div>`;
 }
@@ -7428,6 +7441,10 @@ window.BL = {
   },
   finishPlayoffs() {
     if (!app.state) return;
+    // 读取季后赛结果（E.step 结算后会清空）
+    const po = app.state.playoffs;
+    const poResult = po ? (po.champion ? 'champion' : po.eliminated ? 'eliminated' : null) : null;
+    const oppZh = po && po.currentOppId ? (TEAMS[po.currentOppId]?.zh || '') : '';
     app.receipt = false;
     app.pendingBanner = false;
     app.lastBanner = null;
@@ -7440,6 +7457,12 @@ window.BL = {
     }
     if (screen === 'summary') { app.view = 'summary'; app.archived = false; }
     E.saveState(state);
+    // 夺冠 / 淘汰 自动关闭提示
+    if (poResult === 'champion') {
+      showAutoToast('🏆 恭喜夺冠！你是总冠军！', 4000);
+    } else if (poResult === 'eliminated') {
+      showAutoToast(`💔 季后赛出局，被 ${oppZh || '对手'} 淘汰。`, 3500);
+    }
     render();
   },
   finishSeasonNow() {
