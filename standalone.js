@@ -3666,14 +3666,16 @@ function computeSeasonAwards(state, season, avg, result, base) {
   const a = avg;
   // 结算时当前赛季未 push，+1 计入当前
   const isRookie = (state.seasons || []).filter(s => !s.youth && s.teamId).length + 1 <= 1;
+  // 是否 NBA 顶级联赛
+  const isNbaLeague = season.kind === 'pro' && LEAGUES[season.leagueId] && LEAGUES[season.leagueId].tier === 1;
 
-  // NCAA 联赛：只评选 MVP（属性 + 数据达标），不评最佳阵容/防守阵容等
-  if (season.kind === 'ncaa') {
+  // 非 NBA 顶级联赛（NCAA / 本土职业联赛等）：只评选 MVP，不评最佳阵容/防守阵容等
+  if (season.kind === 'ncaa' || !isNbaLeague) {
     if (ovr >= 78 && a.pts >= 18 && g >= 25) {
       awards.push('mvp');
     }
     // 去重并合并基础奖项
-    const redundant = new Set(['all_team', 'allstar', 'all_nba_1', 'all_nba_2', 'all_nba_3', 'all_def_1', 'all_def_2', 'dpoy', 'sixth_man']);
+    const redundant = new Set(['all_team', 'allstar', 'all_nba_1', 'all_nba_2', 'all_nba_3', 'all_def_1', 'all_def_2', 'dpoy', 'sixth_man', 'scoring_title', 'rebound_title', 'assist_title', 'steal_title', 'block_title']);
     const merged = new Set();
     base.forEach(x => { if (!redundant.has(x)) merged.add(x); });
     awards.forEach(x => merged.add(x));
@@ -3863,8 +3865,8 @@ function generateLeagueAwards(state) {
   const awards = [];
   const alreadyWon = new Set();
 
-  // NCAA 联赛：只评选 MVP（要求属性 + 数据达到门槛），不显示最佳阵容/防守阵容等
-  if (season.kind === 'ncaa') {
+  // 非 NBA 顶级联赛（NCAA / 本土职业联赛等）：只评选 MVP，不显示最佳阵容/防守阵容等
+  if (season.kind === 'ncaa' || !isNba) {
     const ovrReq = state.player.overall >= 78;
     const dataReq = myAvg.pts >= 18 && (myAvg.reb + myAvg.ast) >= 8;
     const gamesReq = season.myStats.g >= 25;
