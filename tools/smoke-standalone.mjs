@@ -55,8 +55,22 @@ await page.waitForTimeout(300);
 
 // 推进 + 单场模拟
 let simTried = false;
+let seasonsPlayed = 0;
 let guard = 0;
-while (guard < 700) {
+while (guard < 2500) {
+  // 赛季页：快进整个赛季
+  if (await page.locator('.season-actions').count()) {
+    await page.click('button:has-text("快进整个赛季")');
+    await page.waitForTimeout(200);
+    continue;
+  }
+  // 赛季总结：继续
+  if (await page.locator('.season-summary').count()) {
+    await page.click('button:has-text("继续 →")');
+    await page.waitForTimeout(100);
+    seasonsPlayed++;
+    continue;
+  }
   if (await page.locator('.sim-entry').count()) {
     await page.click('.sim-entry');
     await page.waitForSelector('.game-pre-card');
@@ -78,13 +92,23 @@ while (guard < 700) {
   else { await page.keyboard.press('Enter'); await page.waitForTimeout(30); }
   guard++;
 }
-console.log('4 simTried:', simTried, 'guard:', guard);
+console.log('4 simTried:', simTried, 'seasonsPlayed:', seasonsPlayed, 'guard:', guard);
 
 // 检查战绩卡关键之战区块
 let sawKeyGames = false;
 let clicks2 = 0;
-while (clicks2 < 1500) {
+while (clicks2 < 3000) {
   if (await page.locator('.sum-hero').count()) break;
+  if (await page.locator('.season-actions').count()) {
+    await page.click('button:has-text("快进整个赛季")');
+    await page.waitForTimeout(150);
+    continue;
+  }
+  if (await page.locator('.season-summary').count()) {
+    await page.click('button:has-text("继续 →")');
+    await page.waitForTimeout(80);
+    continue;
+  }
   const opt = page.locator('.option').first();
   if (await opt.count()) { await opt.click(); await page.waitForTimeout(20); }
   else if (await page.locator('.receipt').count()) { await page.locator('.receipt').first().click(); await page.waitForTimeout(20); }

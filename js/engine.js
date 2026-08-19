@@ -188,6 +188,8 @@ export function newGame({ seed, mode, name, nationality, position, hand, number,
     currentTeamId: null,
     contractTeamId: null,
     seasons: [],
+    season: null,        // 进行中的赛季状态机（逐场模拟）
+    seasonHistory: [],   // 赛季结束后的奖项/总结记录
     ncaa: {
       teamId: null,
       year: 0,          // 大一=1, 大二=2 ...
@@ -408,18 +410,17 @@ function tryNcaaRecruit(state) {
 function ncaaStep(state, age, modifiers) {
   const team = NCAA_TEAMS[state.ncaa.teamId] || Object.values(NCAA_TEAMS)[0];
   const year = state.ncaa.year || 1;
-  const snapshot = simulateNcaaSeason(state, team, age, year, modifiers);
-  state.seasons.push(snapshot);
-  const t = state.totals;
-  t.apps += snapshot.stats.g;
-  t.pts += snapshot.stats.pts;
-  t.reb += snapshot.stats.reb;
-  t.ast += snapshot.stats.ast;
-  t.stl += snapshot.stats.stl;
-  t.blk += snapshot.stats.blk;
-  snapshot.trophies.forEach(tid => t.trophies.push(tid));
-  snapshot.awards.forEach(aid => t.awards.push(aid));
-  if (snapshot.highlight) state.highlights.push({ age, text: snapshot.highlight });
+  // 赛季状态机
+  if (!state.season) {
+    beginSeason(state, team, age, modifiers, 'ncaa');
+  }
+  if (!state.season.done) {
+    return { state, screen: 'season' };
+  }
+  const snapshot = finishSeason(state);
+  if (!snapshot) {
+    return { state, screen: 'season' };
+  }
   state.ncaa.stats = snapshot.stats;
   state.player.age += 1;
   // 大一结束后：选秀决策
@@ -800,6 +801,301 @@ function simulateSeason(state, team, age, modifiers) {
   return { snapshot, rng };
 }
 
+// ---------- 逐场赛季状态机 ----------
+// beginSeason: 赛季开始，预生成赛季计划（结果/奖项/场均目标/成长），生成赛程
+export function beginSeason(state, team, age, modifiers, kind = 'pro') {
+  const planFn = kind === 'ncaa'
+    ? (s, t, a, m) => simulateNcaaSeason(s, t, a, (s.ncaa && s.ncaa.year) || 1, m)
+    : simulateSeason;
+  const devBefore = state.player.overall;
+  const planResult = planFn(state, team, age, modifiers);
+  const snapshot = planResult && planResult.snapshot ? planResult.snapshot : planResult;
+  state.player.overall = devBefore; // 赛季中显示赛季初能力，成长等赛季结束再应用
+  const league = LEAGUES[team.league];
+  const totalGames = league ? league.games : 82;
+  // 赛程：同联赛随机对手（排除自己），主客场交替
+  const oppPool = kind === 'ncaa' ? Object.values(NCAA_TEAMS).filter(t => t.id !== team.id)
+    : Object.values(TEAMS).filter(t => t.league === team.league && t.id !== team.id);
+  const schedule = [];
+  const rng = mulberry32(state.rngState ^ 0x2f2f);
+  for (let i = 0; i < totalGames; i++) {
+    const opp = oppPool.length ? oppPool[Math.floor(rng() * oppPool.length)]
+      : (kind === 'ncaa' ? Object.values(NCAA_TEAMS)[0] : Object.values(TEAMS).find(t => t.id !== team.id));
+    schedule.push({ oppId: opp ? opp.id : null, home: i % 2 === 0 });
+  }
+  // 为每队生成固定 roster（首次按需缓存）
+  const rosters = makeSeasonRosters(state, team, schedule, kind);
+  state.season = {
+    kind,
+    teamId: team.id,
+    totalGames,
+    played: 0,
+    plan: snapshot,
+    baseAvg: snapshot.stats && snapshot.stats.avg ? { ...snapshot.stats.avg } : { pts: 10, reb: 5, ast: 3, stl: 1, blk: 1 },
+    myStats: { g: 0, pts: 0, reb: 0, ast: 0, stl: 0, blk: 0 },
+    wins: 0,
+    losses: 0,
+    schedule,
+    rosters,
+    games: [],
+    done: false,
+  };
+  state.rngState = (rng() * 4294967296) >>> 0 || 12345;
+  return state.season;
+}
+
+// 生成球队 roster（含我方球员插队 + 对手生成球员），供单场 box 展示
+function makeSeasonRosters(state, team, schedule, kind) {
+  const teams = new Map();
+  const table = kind === 'ncaa' ? NCAA_TEAMS : TEAMS;
+  teams.set(team.id, makeSeasonRoster(state, team, mulberry32(0x1234)));
+  for (const g of schedule) {
+    if (g.oppId && !teams.has(g.oppId)) {
+      const opp = table[g.oppId];
+      if (opp) teams.set(g.oppId, makeSeasonRoster(state, opp, mulberry32(0x5678 + g.oppId.length)));
+    }
+  }
+  return teams;
+}
+
+function makeSeasonRoster(state, team, rng) {
+  const isMine = team.id === state.currentTeamId;
+  const surnames = surnamesForTeam(team);
+  const roster = [];
+  const positions = ['PG', 'SG', 'SF', 'PF', 'C'];
+  const usedNames = new Set();
+  const n = 9; // 首发5 + 替补4
+  for (let i = 0; i < n; i++) {
+    const starter = i < 5;
+    const base = team.strength + (starter ? 6 : -4);
+    const ovr = clamp(Math.round(base + rng() * 10 - 5), 55, 99);
+    // 避免同名：姓氏 + 序号（如 张·7 号）
+    let name = surnames[Math.floor(rng() * surnames.length)];
+    let counter = 0;
+    while (usedNames.has(name)) { counter++; name = surnames[Math.floor(rng() * surnames.length)] + (counter > 0 ? `·${counter}` : ''); }
+    usedNames.add(name);
+    const p = {
+      name, pos: positions[i % 5], ovr,
+      starter,
+      pts: 0, reb: 0, ast: 0, stl: 0, blk: 0,
+    };
+    roster.push(p);
+  }
+  if (isMine) {
+    // 我方球员插入首发
+    const mePos = POSITIONS[state.player.position].en;
+    roster[0] = {
+      name: state.player.name, pos: mePos, ovr: state.player.overall,
+      starter: true, isMe: true,
+      pts: 0, reb: 0, ast: 0, stl: 0, blk: 0,
+    };
+  }
+  return roster;
+}
+
+function surnamesForTeam(team) {
+  const lg = LEAGUES[team.league];
+  const country = lg ? COUNTRIES[lg.country] : null;
+  if (country && country.surnames) return country.surnames;
+  return ['张', '王', '李', '刘', '陈', '杨', '赵', '周'];
+}
+
+// 模拟接下来的 n 场比赛（可一次多场或逐场），返回新产生的比赛记录
+export function simNextGames(state, n = 1) {
+  const season = state.season;
+  if (!season || season.done) return [];
+  const out = [];
+  const rng = mulberry32(state.rngState);
+  const teamTable = season.kind === 'ncaa' ? NCAA_TEAMS : TEAMS;
+  for (let k = 0; k < n && !season.done; k++) {
+    const idx = season.played;
+    const g = season.schedule[idx];
+    const opp = g && g.oppId ? teamTable[g.oppId] : null;
+    const homeTeam = teamTable[season.teamId];
+    if (!homeTeam) { season.done = true; break; }
+    const game = simOneLeagueGame(state, season, homeTeam, opp, g ? g.home : true, rng);
+    season.games.push(game);
+    season.played += 1;
+    if (game.win) season.wins += 1; else season.losses += 1;
+    season.myStats.g += 1;
+    season.myStats.pts += game.my.pts;
+    season.myStats.reb += game.my.reb;
+    season.myStats.ast += game.my.ast;
+    season.myStats.stl += game.my.stl;
+    season.myStats.blk += game.my.blk;
+    out.push(game);
+    if (season.played >= season.totalGames) season.done = true;
+  }
+  state.rngState = (rng() * 4294967296) >>> 0 || 12345;
+  return out;
+}
+
+// 单场比赛：比分 + 我方 box + 对方 box
+function simOneLeagueGame(state, season, homeTeam, awayTeam, isHome, rng) {
+  const teamPower = teamPowerFor(season.plan.role, homeTeam, state.player, season.plan);
+  const oppPower = awayTeam ? awayTeam.strength * 0.85 + 12 : 75;
+  const diff = teamPower - oppPower + (isHome ? 3 : -3) + (rng() * 16 - 8);
+  const myScore = Math.max(70, Math.round(102 + diff));
+  const oppScore = Math.max(70, Math.round(102 - diff));
+  const win = myScore > oppScore;
+
+  // 我的单场数据：围绕 baseAvg 波动
+  const base = season.baseAvg;
+  const boost = state.player.overall >= 85 ? 1.15 : 1;
+  const per = (v, min) => Math.max(min, v * boost * (0.45 + rng() * 1.15));
+  const my = {
+    pts: Math.round(per(base.pts, 0)),
+    reb: Math.round(per(base.reb, 1)),
+    ast: Math.round(per(base.ast, 0)),
+    stl: Math.round(per(base.stl, 0)),
+    blk: Math.round(per(base.blk, 0)),
+  };
+
+  // 双方 box：按 roster 分配
+  const homeRoster = season.rosters.get(homeTeam.id) || [];
+  const awayRoster = awayTeam ? (season.rosters.get(awayTeam.id) || []) : [];
+  const homeBox = buildBoxScore(homeRoster, myScore, state.player, rng, true);
+  const awayBox = buildBoxScore(awayRoster, oppScore, state.player, rng, false);
+
+  const topScorers = [...homeBox, ...awayBox].sort((a, b) => b.pts - a.pts).slice(0, 4)
+    .map(p => ({ name: p.name, isMe: p.isMe, pts: p.pts }));
+
+  return {
+    g: season.played + 1,
+    opp: awayTeam ? awayTeam.zh : '对手',
+    oppId: awayTeam ? awayTeam.id : null,
+    home: !!isHome,
+    myScore,
+    oppScore,
+    win,
+    my,
+    homeBox,
+    awayBox,
+    topScorers,
+  };
+}
+
+function teamPowerFor(role, team, player, plan) {
+  const rf = roleFactor(role || 'starter');
+  return team.strength * 0.62 + player.overall * 0.38 + rf * 1.5;
+}
+
+// 生成一队 box（分数按 OVR 权重分配，保证总和与比分一致）
+function buildBoxScore(roster, teamScore, me, rng, isHome) {
+  if (!roster || !roster.length) return [];
+  const totalOvr = roster.reduce((s, p) => s + p.ovr, 0);
+  let assigned = 0;
+  const box = roster.map(p => {
+    const share = totalOvr > 0 ? p.ovr / totalOvr : 1 / roster.length;
+    let pts = Math.round(teamScore * share * (0.8 + rng() * 0.4));
+    if (p.isMe) pts = me.overall >= 88 ? Math.round(teamScore * 0.3) : Math.round(teamScore * 0.22);
+    assigned += pts;
+    const ovrF = p.ovr / 99;
+    return {
+      name: p.name, pos: p.pos, ovr: p.ovr, starter: p.starter, isMe: p.isMe,
+      pts,
+      reb: Math.round(ovrF * 8 + rng() * 6),
+      ast: Math.round(ovrF * 4 + rng() * 4),
+      stl: Math.round(ovrF * 2),
+      blk: Math.round(ovrF * 2),
+    };
+  });
+  // 修正总和到 teamScore
+  const diff2 = teamScore - box.reduce((s, p) => s + p.pts, 0);
+  if (box.length && Math.abs(diff2) > 0) {
+    box[0].pts = Math.max(0, box[0].pts + diff2);
+  }
+  return box;
+}
+
+// 赛季结束：应用成长，返回最终 snapshot（stats 用实际累计场均）
+export function finishSeason(state) {
+  const season = state.season;
+  if (!season) return null;
+  const plan = season.plan;
+  const t = state.totals;
+  const g = season.myStats.g;
+  const avg = g > 0 ? {
+    pts: season.myStats.pts / g,
+    reb: season.myStats.reb / g,
+    ast: season.myStats.ast / g,
+    stl: season.myStats.stl / g,
+    blk: season.myStats.blk / g,
+  } : { pts: 0, reb: 0, ast: 0, stl: 0, blk: 0 };
+  const stats = {
+    g,
+    pts: season.myStats.pts,
+    reb: season.myStats.reb,
+    ast: season.myStats.ast,
+    stl: season.myStats.stl,
+    blk: season.myStats.blk,
+    avg,
+  };
+  // 应用成长
+  state.player.overall = plan.overall;
+  // 按实际战绩修正季后赛结果：胜率越高，最差成绩越好
+  const winPct = season.totalGames > 0 ? season.wins / season.totalGames : 0;
+  let result = plan.result;
+  const tiers = ['missed', 'playoffs', 'quarters', 'semis', 'final', 'champion'];
+  const curIdx = tiers.indexOf(result && result.league);
+  let floorIdx = curIdx >= 0 ? curIdx : 0;
+  if (winPct >= 0.75) floorIdx = Math.max(floorIdx, 4);       // ≥75% 至少总决赛
+  else if (winPct >= 0.68) floorIdx = Math.max(floorIdx, 3);   // ≥68% 至少四强
+  else if (winPct >= 0.6) floorIdx = Math.max(floorIdx, 2);    // ≥60% 至少八强
+  else if (winPct >= 0.5) floorIdx = Math.max(floorIdx, 1);    // ≥50% 至少季后赛
+  if (floorIdx > curIdx) result = { league: tiers[floorIdx] };
+  // 高光：用实际场均判断
+  let highlight = plan.highlight;
+  if (g > 0) {
+    if (avg.pts >= 30) highlight = `单赛季场均 ${avg.pts.toFixed(1)} 分`;
+    else if (avg.pts >= 24 && avg.reb >= 10 && avg.ast >= 10) highlight = `单赛季场均 ${avg.pts.toFixed(1)} 分 ${avg.reb.toFixed(1)} 板 ${avg.ast.toFixed(1)} 助`;
+  }
+  // 冠军奖杯按修正后的结果
+  const trophies = [...plan.trophies];
+  if (result.league === 'champion' && !trophies.includes(`league:${plan.leagueId}`)) {
+    trophies.push(`league:${plan.leagueId}`);
+  }
+  const snapshot = {
+    ...plan,
+    stats,
+    overall: state.player.overall,
+    highlight,
+    result,
+    trophies,
+    record: { wins: season.wins, losses: season.losses },
+    awards: plan.awards,
+  };
+  // 赛季总结（供 UI 展示）
+  state.lastSeasonSummary = {
+    age: plan.age,
+    teamId: season.teamId,
+    leagueId: plan.leagueId,
+    kind: season.kind,
+    record: `${season.wins}-${season.losses}`,
+    wins: season.wins,
+    losses: season.losses,
+    totalGames: season.totalGames,
+    stats: stats.avg,
+    result,
+    resultZh: resultZh(result && result.league, LEAGUES[plan.leagueId]),
+    awards: plan.awards,
+    highlight,
+  };
+  // 记录赛季总结
+  state.seasonHistory = state.seasonHistory || [];
+  state.seasonHistory.push({
+    age: plan.age,
+    teamId: season.teamId,
+    leagueId: plan.leagueId,
+    record: `${season.wins}-${season.losses}`,
+    stats: stats.avg,
+    result,
+    awards: plan.awards,
+  });
+  state.season = null;
+  return snapshot;
+}
+
 function develop(player, age, rng) {
   const p = player.potential;
   let target;
@@ -944,7 +1240,20 @@ export function step(state) {
     roleShift: modifiers.roleShift || (state.suspensionRustRemaining > 0 ? -1 : 0),
   };
 
-  const { snapshot } = simulateSeason(state, team, age, seasonModifiers);
+  // 赛季状态机：赛季中返回 season 屏幕，由玩家逐场模拟
+  if (!state.season) {
+    beginSeason(state, team, age, seasonModifiers, 'pro');
+  }
+  if (!state.season.done) {
+    return { state, screen: 'season' };
+  }
+
+  const { snapshot } = { snapshot: finishSeason(state) };
+  if (!snapshot) {
+    state.phase = 'summary';
+    state.retirementReason = state.retirementReason || 'no_offers';
+    return { state, screen: 'summary' };
+  }
 
   // 结算
   const t = state.totals;

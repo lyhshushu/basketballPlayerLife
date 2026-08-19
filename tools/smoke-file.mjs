@@ -40,6 +40,39 @@ for (let i = 0; i < 13; i++) {
 }
 await page.waitForSelector('.reveal-card');
 console.log('3 reveal ok, ovr:', await page.textContent('.ro-val'));
+await page.click('button:has-text("开始生涯")');
+await page.waitForTimeout(400);
+
+// 职业赛季逐场模拟：进入赛季页
+const inSeason = await page.locator('.season-actions').count();
+console.log('4 赛季页出现:', inSeason > 0);
+if (inSeason) {
+  await page.click('button:has-text("模拟 5 场")');
+  await page.waitForTimeout(200);
+  const spTxt = await page.locator('.sp-txt').textContent();
+  console.log('5 模拟5场后进度:', spTxt, '| 比赛记录:', await page.locator('.season-game').count());
+  // 快进整个赛季
+  await page.click('button:has-text("快进整个赛季")');
+  await page.waitForTimeout(300);
+  // 应显示赛季总结
+  const hasSummary = await page.locator('.season-summary').count();
+  console.log('6 赛季总结出现:', hasSummary > 0);
+  if (hasSummary) {
+    const ssRec = await page.locator('.ss-rec').textContent();
+    console.log('7 赛季战绩:', ssRec);
+    await page.click('button:has-text("继续 →")');
+    await page.waitForTimeout(200);
+    // 之后进入 banner 或事件
+    const hasBanner = await page.locator('.banner').count();
+    const hasEvent = await page.locator('.event-card').count();
+    console.log('8 后续屏幕 banner:', hasBanner, 'event:', hasEvent);
+  }
+} else {
+  // 可能进了 NCAA 选择/签约事件，走普通流程
+  console.log('4b 未进赛季页，可能走事件流程');
+  const opt = page.locator('.option').first();
+  if (await opt.count()) await opt.click();
+}
 
 await browser.close();
 if (errors.length) { console.error('ERRORS:\n' + errors.slice(0, 10).join('\n')); process.exit(1); }

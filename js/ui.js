@@ -27,6 +27,7 @@ const app = {
   archiveDetail: null,
   shareDataUrl: null,
   invite: '',
+  seasonSummary: null,
   // 建球员
   build: null,
   // 单场模拟
@@ -257,6 +258,21 @@ function careerHTML() {
   if (s.phase === 'summary') {
     return summaryHTML();
   }
+  // 赛季进行中：逐场模拟屏幕
+  if (s.season && !s.season.done) {
+    return seasonHTML(s);
+  }
+  // 赛季总结
+  if (app.seasonSummary) {
+    body = seasonSummaryHTML(app.seasonSummary);
+    return shell(`
+      ${topbarHTML()}
+      <div class="scroll" style="padding-top:6px">
+        ${body}
+      </div>
+      ${app.modal ? modalHTML() : ''}
+    `);
+  }
   if (app.receipt) {
     // 决策回执优先：显示结果，点一下继续
     body = receiptHTML(s) + (s.currentEvent ? `<div class="banner-tip" style="margin-top:8px">轻触继续</div>` : '');
@@ -273,6 +289,100 @@ function careerHTML() {
     </div>
     ${app.modal ? modalHTML() : ''}
   `);
+}
+
+// ---------- 逐场赛季 ----------
+function seasonHTML(s) {
+  const season = s.season;
+  const team = TEAMS[season.teamId] || NCAA_TEAMS[season.teamId] || null;
+  const lg = LEAGUES[season.leagueId] || (season.kind === 'ncaa' ? LEAGUES.ncaa : null);
+  const pct = Math.round((season.played / season.totalGames) * 100);
+  const myAvg = season.myStats.g > 0 ? {
+    pts: (season.myStats.pts / season.myStats.g).toFixed(1),
+    reb: (season.myStats.reb / season.myStats.g).toFixed(1),
+    ast: (season.myStats.ast / season.myStats.g).toFixed(1),
+    stl: (season.myStats.stl / season.myStats.g).toFixed(1),
+    blk: (season.myStats.blk / season.myStats.g).toFixed(1),
+  } : { pts: '0', reb: '0', ast: '0', stl: '0', blk: '0' };
+  // 最近比赛
+  const recent = season.games.slice(-5).reverse().map(g => `
+    <div class="season-game ${g.win ? 'win' : 'lose'}">
+      <span class="sg-r">${g.home ? '主' : '客'}${g.win ? ' W' : ' L'}</span>
+      <span class="sg-opp">${esc(g.opp)}</span>
+      <span class="sg-score num">${g.myScore} : ${g.oppScore}</span>
+      <span class="sg-me num">我 ${g.my.pts}分</span>
+    </div>`).join('') || '<div class="empty">还没开打</div>';
+
+  return shell(`
+    ${topbarHTML()}
+    <div class="scroll" style="padding-top:6px">
+      <div class="season-top">
+        <div class="season-head">
+          <div class="age">${s.player.age} <small>岁</small></div>
+          <div class="team">${team ? esc(team.zh) : ''}${lg ? ` · ${esc(lg.zh)}` : ''}${season.kind === 'ncaa' ? ' · 大学赛季' : ' · 常规赛'}</div>
+        </div>
+        <div class="season-progress"><div class="sp-bar" style="width:${pct}%"></div><span class="sp-txt">${season.played}/${season.totalGames}</span></div>
+        <div class="season-record"><span class="w">${season.wins}胜</span><span class="l">${season.losses}负</span></div>
+      </div>
+
+      <div class="label" style="margin-top:12px">我的场均</div>
+      <div class="season-avg">
+        <div><div class="num">${myAvg.pts}</div><div class="lab">得分</div></div>
+        <div><div class="num">${myAvg.reb}</div><div class="lab">篮板</div></div>
+        <div><div class="num">${myAvg.ast}</div><div class="lab">助攻</div></div>
+        <div><div class="num">${myAvg.stl}</div><div class="lab">抢断</div></div>
+        <div><div class="num">${myAvg.blk}</div><div class="lab">盖帽</div></div>
+      </div>
+
+      <div class="label" style="margin-top:12px">最近比赛</div>
+      <div class="season-games">${recent}</div>
+
+      <div class="season-actions">
+        <button class="btn btn-primary" onclick="BL.simGames(1)">▶ 模拟 1 场</button>
+        <button class="btn btn-primary" onclick="BL.simGames(5)">⏩ 模拟 5 场</button>
+        <button class="btn btn-outline" onclick="BL.simAll()">快进整个赛季</button>
+      </div>
+      <div style="height:24px"></div>
+    </div>
+  `);
+}
+
+// ---------- 赛季总结 ----------
+function seasonSummaryHTML(sum) {
+  const team = TEAMS[sum.teamId] || NCAA_TEAMS[sum.teamId] || null;
+  const lg = LEAGUES[sum.leagueId];
+  const awardNames = {
+    allstar: '全明星', all_team: '最佳阵容', mvp: '常规赛MVP', fmvp: '总决赛MVP',
+    dpoy: '最佳防守', scoring_title: '得分王', rebound_title: '篮板王', assist_title: '助攻王',
+    allstar_mvp: '全明星MVP', dunk_king: '扣篮王', three_king: '三分王',
+  };
+  const awardChips = (sum.awards || []).map(a => `<span class="chip chip-green">🏅 ${awardNames[a] || a}</span>`).join('') || '<span class="muted-2">本赛季没有个人奖项</span>';
+  return `
+    <div class="season-summary">
+      <div class="ss-head">
+        <div class="age">${sum.age} <small>岁</small></div>
+        <div class="team">${team ? esc(team.zh) : ''}${lg ? ` · ${esc(lg.zh)}` : ''}${sum.kind === 'ncaa' ? ' · 大学赛季' : ''}</div>
+      </div>
+      <div class="ss-result">
+        <div class="ss-rec num">${sum.record}</div>
+        <div class="ss-zh">${esc(sum.resultZh)}</div>
+      </div>
+      <div class="label" style="margin-top:12px">赛季场均</div>
+      <div class="season-avg">
+        <div><div class="num">${sum.stats ? E.fmtAvg(sum.stats.pts) : '0'}</div><div class="lab">得分</div></div>
+        <div><div class="num">${sum.stats ? E.fmtAvg(sum.stats.reb) : '0'}</div><div class="lab">篮板</div></div>
+        <div><div class="num">${sum.stats ? E.fmtAvg(sum.stats.ast) : '0'}</div><div class="lab">助攻</div></div>
+        <div><div class="num">${sum.stats ? E.fmtAvg(sum.stats.stl) : '0'}</div><div class="lab">抢断</div></div>
+        <div><div class="num">${sum.stats ? E.fmtAvg(sum.stats.blk) : '0'}</div><div class="lab">盖帽</div></div>
+      </div>
+      <div class="label" style="margin-top:12px">个人奖项</div>
+      <div class="ss-awards">${awardChips}</div>
+      ${sum.highlight ? `<div class="ss-highlight">🔥 ${esc(sum.highlight)}</div>` : ''}
+      <div style="height:14px"></div>
+      <button class="btn btn-primary btn-lg btn-block" onclick="BL.dismissSeasonSummary()">继续 →</button>
+      <div style="height:24px"></div>
+    </div>
+  `;
 }
 
 function bannerHTML(snapshot) {
@@ -1227,6 +1337,11 @@ window.BL = {
     app.receipt = false;
     app.pendingBanner = false;
     app.lastBanner = null;
+    // 赛季进行中：直接显示赛季页（careerHTML 处理）
+    if (st.phase === 'career' && st.season && !st.season.done) {
+      render();
+      return;
+    }
     // 若停在季后赛关键战前，恢复该赛季的 banner 以保留模拟入口
     if (st.phase === 'career' && st.pendingGame && st.pendingGame.type === 'playoff_key' && st.pendingGame.seasonIndex != null) {
       app.lastBanner = st.seasons[st.pendingGame.seasonIndex] || null;
@@ -1483,6 +1598,53 @@ window.BL = {
     E.saveState(state);
     render();
   },
+  dismissSeasonSummary() {
+    app.seasonSummary = null;
+    render();
+  },
+  // ---------- 逐场赛季 ----------
+  simGames(n) {
+    if (!app.state || !app.state.season) return;
+    E.simNextGames(app.state, n);
+    // 赛季打完则直接结算
+    if (app.state.season && app.state.season.done) {
+      BL.finishSeasonNow();
+      return;
+    }
+    E.saveState(app.state);
+    render();
+  },
+  simAll() {
+    if (!app.state || !app.state.season) return;
+    const remain = app.state.season.totalGames - app.state.season.played;
+    E.simNextGames(app.state, remain);
+    if (app.state.season && app.state.season.done) {
+      BL.finishSeasonNow();
+      return;
+    }
+    E.saveState(app.state);
+    render();
+  },
+  finishSeasonNow() {
+    if (!app.state) return;
+    // 赛季已打完：清掉 pending banner，调用 step 完成结算
+    app.receipt = false;
+    app.pendingBanner = false;
+    app.lastBanner = null;
+    const { state, screen, snapshot } = E.step(app.state);
+    app.state = state;
+    // 展示赛季总结
+    if (state.lastSeasonSummary) {
+      app.seasonSummary = state.lastSeasonSummary;
+    }
+    if (screen === 'banner') {
+      app.lastBanner = snapshot;
+      app.pendingBanner = !!state.currentEvent;
+    }
+    if (screen === 'summary') { app.view = 'summary'; app.archived = false; }
+    E.saveState(state);
+    render();
+  },
   choose(optionId) {
     if (!app.state || !app.state.currentEvent) return;
     if (navigator.vibrate) navigator.vibrate(12);
@@ -1567,9 +1729,10 @@ function fallbackCopy(text) {
   document.body.removeChild(ta);
 }
 
-// 键盘继续：空格/回车轻触继续
+// 键盘继续：空格/回车轻触继续（赛季页不自动跳，需玩家手动模拟比赛）
 document.addEventListener('keydown', (e) => {
   if ((e.key === ' ' || e.key === 'Enter') && app.view === 'career' && !app.modal) {
+    if (app.state?.season && !app.state.season.done) return;
     e.preventDefault();
     if (app.state?.currentEvent && !app.receipt) return;
     BL.next();

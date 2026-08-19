@@ -737,3 +737,42 @@ select.team-select {
 .box-table td:first-child { text-align: left; font-weight: 700; }
 .box-table tr.me td { background: rgba(16,185,129,0.1); color: var(--accent-2); }
 .sim-entry { margin: 12px 0; }
+/* ================= 逐场赛季 ================= */
+.season-top { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+.season-head { display: flex; align-items: center; gap: 10px; }
+.season-head .age { font-size: 18px; font-weight: 900; color: var(--amber); }
+.season-head .age small { font-size: 11px; color: var(--text-3); }
+.season-head .team { font-size: 14px; font-weight: 800; }
+.season-progress { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.sp-bar { height: 8px; border-radius: 99px; background: var(--accent); transition: width 0.3s; min-width: 4px; }
+.sp-txt { font-size: 11px; font-weight: 900; color: var(--text-2); white-space: nowrap; }
+.season-record { margin-top: 8px; font-size: 12px; font-weight: 800; }
+.season-record .w { color: var(--accent-2); margin-right: 10px; }
+.season-record .l { color: #f87171; }
+.season-avg { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.season-avg div { text-align: center; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 4px; }
+.season-avg .num { font-size: 18px; font-weight: 900; color: var(--amber); }
+.season-avg .lab { font-size: 9px; color: var(--text-3); margin-top: 2px; }
+.season-games { display: grid; gap: 6px; }
+.season-game { display: flex; align-items: center; gap: 10px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; font-size: 12px; }
+.season-game.win { border-left: 3px solid var(--accent); }
+.season-game.lose { border-left: 3px solid #f87171; }
+.season-game .sg-r { font-weight: 900; color: var(--text-2); min-width: 34px; }
+.season-game.win .sg-r { color: var(--accent-2); }
+.season-game.lose .sg-r { color: #f87171; }
+.season-game .sg-opp { flex: 1; font-weight: 800; }
+.season-game .sg-score { color: var(--text); font-weight: 800; }
+.season-game .sg-me { color: var(--amber); font-weight: 800; }
+.season-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
+.season-actions .btn-outline { grid-column: 1 / -1; }
+/* ================= 赛季总结 ================= */
+.season-summary { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
+.ss-head { display: flex; align-items: center; gap: 10px; }
+.ss-head .age { font-size: 18px; font-weight: 900; color: var(--amber); }
+.ss-head .age small { font-size: 11px; color: var(--text-3); }
+.ss-head .team { font-size: 14px; font-weight: 800; }
+.ss-result { margin-top: 12px; text-align: center; background: linear-gradient(160deg, rgba(251,191,36,0.1), transparent 60%); border-radius: 12px; padding: 14px; }
+.ss-result .ss-rec { font-size: 34px; font-weight: 900; color: var(--amber); }
+.ss-result .ss-zh { font-size: 13px; font-weight: 800; color: var(--text-2); margin-top: 4px; }
+.ss-awards { display: flex; flex-wrap: wrap; gap: 6px; }
+.ss-highlight { margin-top: 12px; font-size: 12px; font-weight: 800; color: var(--amber); text-align: center; }
