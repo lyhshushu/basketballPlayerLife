@@ -192,6 +192,20 @@ export function simulateGame(homeTeam, awayTeam, homeRoster, awayRoster, opts = 
     return weighted[weighted.length - 1].p;
   }
 
+  // 助攻者：从除出手者外的场上球员中按传球能力加权选（玩家可拿助攻）
+  function pickAssist(side, scorer) {
+    const players = onCourt(side).filter(p => p !== scorer);
+    if (!players.length) return null;
+    const weighted = players.map(p => ({
+      p,
+      w: (p.attrs.PAS || 60) + (p.attrs.HAN || 60) * 0.5 + (p.isMe ? 10 : 0),
+    }));
+    const total = weighted.reduce((s, x) => s + x.w, 0);
+    let r = rng() * total;
+    for (const x of weighted) { r -= x.w; if (r <= 0) return x.p; }
+    return weighted[weighted.length - 1].p;
+  }
+
   function pickDefender(side, scorer) {
     const players = onCourt(side).filter(p => !p.isMe);
     // 尽量同位置
@@ -246,9 +260,8 @@ export function simulateGame(homeTeam, awayTeam, homeRoster, awayRoster, opts = 
     base = clamp(base, 0.12, 0.6);
     const made = rng() < base;
     if (made) {
-      // 助攻
-      const mate = onCourt(offSide).find(p => p !== scorer && !p.isMe);
-      const assist = rng() < 0.55 ? mate : null;
+      // 助攻：从除出手者外的场上球员中按传球能力加权选（含玩家，可拿到助攻）
+      const assist = rng() < 0.55 ? pickAssist(offSide, scorer) : null;
       addTo(scorer, 'pts', pts);
       addTo(scorer, 'min', 1);
       if (assist) { addTo(assist, 'ast', 1); }

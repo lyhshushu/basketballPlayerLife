@@ -891,3 +891,4 @@ select.team-select {
 .bracket-round .br-team.win { color: var(--amber); }
 .bracket-round .br-vs { font-size: 8px; color: var(--text-3); margin: 2px 0; }
 .br-arrow { color: var(--text-3); font-size: 14px; flex-shrink: 0; }
+.po-rank { display: block; font-size: 9px; color: var(--text-3); font-weight: 700; margin-bottom: 2px; }

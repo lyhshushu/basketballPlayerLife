@@ -1,4 +1,4 @@
-// ================= 篮球生涯模拟器 · 引擎 =================
+﻿// ================= 篮球生涯模拟器 · 引擎 =================
 import {
   APP_TITLE, TAGLINE, MODES, POSITIONS, COUNTRIES, LEAGUES, TEAMS, NCAA_TEAMS,
   EVENTS, SHOWDOWNS, TITLES, FAREWELL_STYLES, GOODBYE_STYLES, WALKAWAY_STYLES,
@@ -69,13 +69,13 @@ export function genSeed() {
 
 // ---------- 格式化 ----------
 export function fmtMoney(v) {
+  // v 单位为万美元
   if (v == null || isNaN(v)) return '—';
   if (v >= 10000) {
     const y = v / 10000;
-    return (y >= 100 ? Math.round(y) : y.toFixed(y >= 10 ? 1 : 2)) + '亿';
+    return '$' + (y >= 100 ? Math.round(y) : y.toFixed(y >= 10 ? 1 : 2)) + '亿';
   }
-  if (v >= 1000) return Math.round(v) + '万';
-  return Math.round(v) + '万';
+  return '$' + Math.round(v) + '万';
 }
 
 export function fmtInt(n) {
@@ -284,15 +284,16 @@ function rivalSeason(rival, age, rng) {
 }
 
 export function marketValueOf(overall, age, league) {
+  // 单位：万美元（NBA 顶薪约 5000-6000 万美元）
   let v;
-  if (overall < 75) v = 20 + (overall - 60) * 8;
-  else if (overall < 85) v = 150 * Math.pow(1.35, overall - 75);
-  else if (overall < 95) v = 3200 * Math.pow(1.30, overall - 85);
-  else v = 46000 * Math.pow(1.22, overall - 95);
+  if (overall < 75) v = 200 + (overall - 60) * 20;
+  else if (overall < 85) v = 500 * Math.pow(1.3, overall - 75);
+  else if (overall < 95) v = 2000 * Math.pow(1.18, overall - 85);
+  else v = 8000 * Math.pow(1.12, overall - 95);
   const ageFactor =
     age <= 18 ? 0.45 : age <= 20 ? 0.6 : age <= 23 ? 0.82 :
     age <= 30 ? 1.0 : age <= 32 ? 0.82 : age <= 34 ? 0.62 : 0.45;
-  const leagueFactor = { 1: 1.12, 2: 1.0, 3: 0.82, 4: 0.62 }[league.tier] ?? 0.8;
+  const leagueFactor = { 1: 1.0, 2: 0.6, 3: 0.3, 4: 0.16 }[league.tier] ?? 0.2;
   return Math.round(v * ageFactor * leagueFactor);
 }
 
@@ -724,7 +725,7 @@ function runDraft(state) {
   state.lastEventOutcome = {
     eventKey: 'draft_choice',
     optionKey: 'declare',
-    text: `选秀大会第 ${pick} 顺位，${team.zh} 选中了你！签下新秀合同（${fmtMoney(state.player.contract.annualUsd * 7)}/年 × ${state.player.contract.years} 年）。`,
+    text: `选秀大会第 ${pick} 顺位，${team.zh} 选中了你！签下新秀合同（${fmtMoney(state.player.contract.annualUsd)}/年 × ${state.player.contract.years} 年）。`,
     kind: 'positive',
   };
   state.legacyLines.push(`第 ${pick} 顺位，你被 ${team.zh} 选中。`);
@@ -880,18 +881,18 @@ function simulateSeason(state, team, age, modifiers) {
   if (cup === 'cup_champion') trophies.push(`cup:${team.league}`);
 
   const marketValue = marketValueOf(player.overall, age, league);
-  // 薪资：优先用合同年薪，无合同则按能力估
+  // 薪资：优先用合同年薪（万美元），无合同则按能力估
   let salary;
   if (player.contract && player.contract.teamId === team.id) {
     // 合同按年限递增（新秀合同前几年低，之后涨）
     const contractYears = player.contract.years || 1;
     const progress = contractYears - (player.contract.yearsLeft || 0);
     const grow = 1 + progress * 0.08;
-    salary = (player.contract.annualUsd || 1000) * 7 * grow * (modifiers.salaryMult || 1);
+    salary = (player.contract.annualUsd || 1000) * grow * (modifiers.salaryMult || 1);
   } else {
     const tier = contractTierOf(player.overall);
     const tierFactor = { 1: 1.0, 2: 0.6, 3: 0.3, 4: 0.16 }[league && league.tier] ?? 0.2;
-    salary = CONTRACT_YEARLY[tier] * tierFactor * 7 * (modifiers.salaryMult || 1);
+    salary = CONTRACT_YEARLY[tier] * tierFactor * (modifiers.salaryMult || 1);
   }
   salary = Math.round(salary);
 
@@ -1034,6 +1035,8 @@ export function beginSeason(state, team, age, modifiers, kind = 'pro') {
     myStats: { g: 0, pts: 0, reb: 0, ast: 0, stl: 0, blk: 0 },
     wins: 0,
     losses: 0,
+    // 全联盟战绩（逐步真实累积）：teamId -> { wins, losses }
+    leagueRecord: initLeagueRecord(kind, team, schedule),
     schedule,
     rosters,
     games: [],
@@ -1041,6 +1044,16 @@ export function beginSeason(state, team, age, modifiers, kind = 'pro') {
   };
   state.rngState = (rng() * 4294967296) >>> 0 || 12345;
   return state.season;
+}
+
+// 初始化联盟各队战绩记录
+function initLeagueRecord(kind, team, schedule) {
+  const rec = {};
+  const table = kind === 'ncaa' ? NCAA_TEAMS : TEAMS;
+  const teams = new Set([team.id]);
+  for (const g of schedule) if (g.oppId) teams.add(g.oppId);
+  for (const id of teams) rec[id] = { wins: 0, losses: 0 };
+  return rec;
 }
 
 // 生成球队 roster（含我方球员插队 + 对手生成球员），供单场 box 展示
@@ -1213,6 +1226,19 @@ export function simNextGames(state, n = 1) {
     season.games.push(game);
     season.played += 1;
     if (game.win) season.wins += 1; else season.losses += 1;
+    // 更新联盟战绩（含玩家）
+    if (season.leagueRecord) {
+      if (game.win) season.leagueRecord[season.teamId].wins++;
+      else season.leagueRecord[season.teamId].losses++;
+      if (opp) {
+        if (game.win) season.leagueRecord[opp.id].losses++;
+        else season.leagueRecord[opp.id].wins++;
+      }
+    }
+    // 同步模拟联盟其他比赛（逐步真实累积战绩）
+    if (season.kind === 'pro') {
+      simLeagueDay(state, season, teamTable, rng);
+    }
     season.myStats.g += 1;
     season.myStats.pts += game.my.pts;
     season.myStats.reb += game.my.reb;
@@ -1234,7 +1260,25 @@ export function simNextGames(state, n = 1) {
   return out;
 }
 
-// 把一场"完整模拟（逐回合 play-by-play）"的常规赛结果写入赛季统计
+// 模拟一轮联盟其他比赛（每队打一场），累计真实战绩到 leagueRecord
+function simLeagueDay(state, season, teamTable, rng) {
+  const teams = Object.values(teamTable).filter(t => t.league === season.leagueId);
+  if (teams.length < 2) return;
+  // 打乱的队伍两两配对
+  const shuffled = teams.slice().sort(() => rng() - 0.5);
+  const used = new Set([season.teamId]);
+  for (let i = 0; i < shuffled.length - 1; i += 2) {
+    const a = shuffled[i], b = shuffled[i + 1];
+    if (used.has(a.id) || used.has(b.id) || a.id === b.id) continue;
+    used.add(a.id); used.add(b.id);
+    if (!season.leagueRecord[a.id]) season.leagueRecord[a.id] = { wins: 0, losses: 0 };
+    if (!season.leagueRecord[b.id]) season.leagueRecord[b.id] = { wins: 0, losses: 0 };
+    const game = simOneLeagueGame(state, season, a, b, i % 2 === 0, rng);
+    // 只累加战绩，不记录明细
+    if (game.win) { season.leagueRecord[a.id].wins++; season.leagueRecord[b.id].losses++; }
+    else { season.leagueRecord[a.id].losses++; season.leagueRecord[b.id].wins++; }
+  }
+}
 // game 来自 simEngine.simulateGame；oppId 是对手球队 id
 export function applyRegularGameResult(state, game, oppId) {
   const season = state.season;
@@ -1531,30 +1575,22 @@ export function generateStandings(state) {
   const season = state.season;
   if (!season) return null;
   const isNba = season.kind === 'pro' && LEAGUES[season.leagueId] && LEAGUES[season.leagueId].tier === 1;
+  // 用逐步累积的真实战绩（leagueRecord），没有记录的按 strength 兜底
+  const rec = season.leagueRecord || {};
+  const teamOf = (id) => TEAMS[id] || NCAA_TEAMS[id] || null;
   if (!isNba) {
-    // 非 NBA 联赛：简化排行（按 strength）
     const teams = Object.values(TEAMS).filter(t => t.league === season.leagueId);
-    return { single: teams.map(t => ({
-      id: t.id, zh: t.zh, abbr: t.abbr, color: t.color, strength: t.strength,
-      wins: Math.round(t.strength * 0.9), losses: Math.round(82 - t.strength * 0.9),
-      isMe: t.id === season.teamId,
-    })).sort((a, b) => b.wins - a.wins) };
+    return { single: teams.map(t => {
+      const r = rec[t.id] || { wins: 0, losses: 0 };
+      return { id: t.id, zh: t.zh, abbr: t.abbr, color: t.color, strength: t.strength, wins: r.wins, losses: r.losses, isMe: t.id === season.teamId };
+    }).sort((a, b) => b.wins - a.wins) };
   }
-  // NBA：东西部排行
-  const myWins = season.wins, myLosses = season.losses;
-  const myTeam = TEAMS[season.teamId];
+  // NBA：东西部排行（真实战绩）
   const confs = { E: [], W: [] };
   Object.values(TEAMS).filter(t => t.league === 'nba').forEach(t => {
     const c = t.conf || 'W';
-    let wins, losses;
-    if (t.id === season.teamId) { wins = myWins; losses = myLosses; }
-    else {
-      // 按 strength 估算战绩（含随机）
-      const p = clamp((t.strength - 70) / 30, 0.35, 0.8);
-      wins = Math.round(82 * p + (Math.random() * 6 - 3));
-      losses = 82 - wins;
-    }
-    confs[c].push({ id: t.id, zh: t.zh, abbr: t.abbr, color: t.color, strength: t.strength, wins, losses, isMe: t.id === season.teamId });
+    const r = rec[t.id] || { wins: 0, losses: 0 };
+    confs[c].push({ id: t.id, zh: t.zh, abbr: t.abbr, color: t.color, strength: t.strength, wins: r.wins, losses: r.losses, isMe: t.id === season.teamId });
   });
   confs.E.sort((a, b) => b.wins - a.wins);
   confs.W.sort((a, b) => b.wins - a.wins);
@@ -1864,7 +1900,8 @@ function computeSeasonAwards(state, season, avg, result, base) {
   const g = season.myStats.g;
   const winPct = season.totalGames > 0 ? season.wins / season.totalGames : 0;
   const a = avg;
-  const isRookie = (state.seasons || []).filter(s => !s.youth && s.teamId).length <= 1;
+  // 结算时当前赛季未 push，+1 计入当前
+  const isRookie = (state.seasons || []).filter(s => !s.youth && s.teamId).length + 1 <= 1;
 
   // NCAA 联赛：只评选 MVP（属性 + 数据达标），不评最佳阵容/防守阵容等
   if (season.kind === 'ncaa') {
@@ -2126,7 +2163,9 @@ export function generateLeagueAwards(state) {
   awards.push({ key: 'dpoy', zh: '最佳防守球员', winner: makeLine(dpoy) });
 
   // 最佳新秀（生涯第一季的我，或其他低龄球员）
-  const isRookie = (state.seasons || []).filter(s => !s.youth && s.teamId).length <= 1;
+  // 注意：结算时当前赛季尚未 push 进 seasons，故 +1 计入当前
+  const proCount = (state.seasons || []).filter(s => !s.youth && s.teamId).length + 1;
+  const isRookie = proCount <= 1;
   if (isRookie) {
     awards.push({ key: 'roty', zh: '最佳新秀', winner: makeLine(me) });
   } else {
@@ -2536,7 +2575,7 @@ function contractExpiryEvent(state) {
       id: `fa-${t.id}`,
       teamId: t.id,
       label: `${t.zh}（${LEAGUES[t.league].zh}）`,
-      hint: `${contractTierZh(offerTier)} · ${fmtMoney(offerAnnual * tierFactor * 7)}/年 × ${years} 年`,
+      hint: `${contractTierZh(offerTier)} · ${fmtMoney(offerAnnual * tierFactor)}/年 × ${years} 年`,
       annual: Math.round(offerAnnual * tierFactor),
       years,
     });
@@ -2545,9 +2584,9 @@ function contractExpiryEvent(state) {
     id: `contract-expiry-${state.step}`,
     type: 'contract_expiry',
     title: '合同到期',
-    text: `赛季结束，你和${team.zh}的合同到期了。${contractTierZh(tier)}：${fmtMoney(annual * tierFactor * 7)}/年。是续约还是试试自由市场？`,
+    text: `赛季结束，你和${team.zh}的合同到期了。${contractTierZh(tier)}：${fmtMoney(annual * tierFactor)}/年。是续约还是试试自由市场？`,
     options: [
-      { id: 'renew', label: `与${team.zh}续约`, hint: `${contractTierZh(tier)} · ${fmtMoney(annual * tierFactor * 7)}/年 × ${years} 年` },
+      { id: 'renew', label: `与${team.zh}续约`, hint: `${contractTierZh(tier)} · ${fmtMoney(annual * tierFactor)}/年 × ${years} 年` },
       ...offers.map(o => ({ id: `fa-${o.teamId}`, label: `自由市场 · 加盟 ${o.label}`, hint: o.hint, teamId: o.teamId })),
     ],
     offers,
@@ -2566,7 +2605,7 @@ function resolveContractExpiry(state, optionId, offerTeamId) {
     state.lastEventOutcome = {
       eventKey: 'contract_renew',
       optionKey: 'renew',
-      text: `你和${team.zh}续约 ${state.player.contract.years} 年（${contractTierZh(state.player.contract.tier)} · ${fmtMoney(state.player.contract.annualUsd * 7)}/年）。`,
+      text: `你和${team.zh}续约 ${state.player.contract.years} 年（${contractTierZh(state.player.contract.tier)} · ${fmtMoney(state.player.contract.annualUsd)}/年）。`,
       kind: 'positive',
     };
   } else {
@@ -2580,7 +2619,7 @@ function resolveContractExpiry(state, optionId, offerTeamId) {
     state.lastEventOutcome = {
       eventKey: 'contract_renew',
       optionKey: 'fa',
-      text: `你以自由球员身份加盟 ${newTeam.zh}，签下 ${contractTierZh(state.player.contract.tier)}（${fmtMoney(state.player.contract.annualUsd * 7)}/年 × ${state.player.contract.years} 年）。`,
+      text: `你以自由球员身份加盟 ${newTeam.zh}，签下 ${contractTierZh(state.player.contract.tier)}（${fmtMoney(state.player.contract.annualUsd)}/年 × ${state.player.contract.years} 年）。`,
       kind: 'positive',
     };
   }
@@ -3302,8 +3341,8 @@ export function computeTitles(state) {
   if (won('world_cup') && won('olympics') && won('continental') && champCount >= 2) unlocked('jin_man_guan', '世界杯、奥运、洲际、联赛，全拿过。');
   if (consecutiveTitles(state) >= 3) unlocked('wang_chao_ji', `同一支球队 ${consecutiveTitles(state)} 连冠，王朝。`);
   if (champCount >= 12) unlocked('guan_jun_shou_ge_ji', `生涯 ${champCount} 座奖杯。`);
-  if (t.salary >= 200000) unlocked('lan_tan_shou_fu', `生涯总收入 ${fmtMoney(t.salary)}。`);
-  if (state.seasons.some(s => s.salary >= 30000)) unlocked('tian_jia_he_tong', `单季年薪 ${fmtMoney(Math.max(...state.seasons.map(s => s.salary)))}。`);
+  if (t.salary >= 50000) unlocked('lan_tan_shou_fu', `生涯总收入 ${fmtMoney(t.salary)}。`);
+  if (state.seasons.some(s => s.salary >= 5000)) unlocked('tian_jia_he_tong', `单季年薪 ${fmtMoney(Math.max(...state.seasons.map(s => s.salary)))}。`);
   if (countAward('allstar') >= 10) unlocked('quan_ming_xing_zhi_wang', `${countAward('allstar')} 次全明星。`);
   if (countAward('mvp') >= 4) unlocked('zui_you_jia_zhi', `${countAward('mvp')} 次常规赛MVP。`);
   if (countAward('fmvp') >= 3) unlocked('zong_jue_sai_zhi_wang', `${countAward('fmvp')} 次总决赛MVP。`);
