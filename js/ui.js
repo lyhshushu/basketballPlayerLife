@@ -2045,6 +2045,7 @@ window.__poolDebug = { state: 'loading' };
 loadPool().then((pool) => {
   app.pool = pool;
   app.poolLoaded = true;
+  E.setNbaPool(pool);
   window.__poolDebug = { state: 'loaded', teams: Object.keys(pool || {}).length };
 }).catch((e) => {
   app.poolLoaded = false;
