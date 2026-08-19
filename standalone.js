@@ -82,22 +82,23 @@ const LEAGUES = {
 
 // 球队：strength 60-95，color 主色，abbr 缩写
 const TEAMS = {
-  // NBA
-  lal: { zh: '洛杉矶湖人', abbr: 'LAL', color: '#552583', league: 'nba', strength: 88 },
-  bos: { zh: '波士顿凯尔特人', abbr: 'BOS', color: '#007A33', league: 'nba', strength: 90 },
-  gsw: { zh: '金州勇士', abbr: 'GSW', color: '#1D428A', league: 'nba', strength: 86 },
-  chi: { zh: '芝加哥公牛', abbr: 'CHI', color: '#CE1141', league: 'nba', strength: 80 },
-  mia: { zh: '迈阿密热火', abbr: 'MIA', color: '#98002E', league: 'nba', strength: 82 },
-  den: { zh: '丹佛掘金', abbr: 'DEN', color: '#0E2240', league: 'nba', strength: 87 },
-  mil: { zh: '密尔沃基雄鹿', abbr: 'MIL', color: '#00471B', league: 'nba', strength: 85 },
-  okc: { zh: '俄克拉荷马城雷霆', abbr: 'OKC', color: '#007AC1', league: 'nba', strength: 86 },
-  dal: { zh: '达拉斯独行侠', abbr: 'DAL', color: '#00538C', league: 'nba', strength: 84 },
-  pho: { zh: '菲尼克斯太阳', abbr: 'PHX', color: '#E56020', league: 'nba', strength: 81 },
-  phi: { zh: '费城76人', abbr: 'PHI', color: '#006BB6', league: 'nba', strength: 83 },
-  nyk: { zh: '纽约尼克斯', abbr: 'NYK', color: '#F58426', league: 'nba', strength: 82 },
-  lac: { zh: '洛杉矶快船', abbr: 'LAC', color: '#C8102E', league: 'nba', strength: 83 },
-  cle: { zh: '克利夫兰骑士', abbr: 'CLE', color: '#860038', league: 'nba', strength: 82 },
-  sas: { zh: '圣安东尼奥马刺', abbr: 'SAS', color: '#C4CED4', league: 'nba', strength: 81 },
+  // NBA（conf: 东西部分区）
+  lal: { zh: '洛杉矶湖人', abbr: 'LAL', color: '#552583', league: 'nba', strength: 88, conf: 'W' },
+  bos: { zh: '波士顿凯尔特人', abbr: 'BOS', color: '#007A33', league: 'nba', strength: 90, conf: 'E' },
+  gsw: { zh: '金州勇士', abbr: 'GSW', color: '#1D428A', league: 'nba', strength: 86, conf: 'W' },
+  chi: { zh: '芝加哥公牛', abbr: 'CHI', color: '#CE1141', league: 'nba', strength: 80, conf: 'E' },
+  mia: { zh: '迈阿密热火', abbr: 'MIA', color: '#98002E', league: 'nba', strength: 82, conf: 'E' },
+  den: { zh: '丹佛掘金', abbr: 'DEN', color: '#0E2240', league: 'nba', strength: 87, conf: 'W' },
+  mil: { zh: '密尔沃基雄鹿', abbr: 'MIL', color: '#00471B', league: 'nba', strength: 85, conf: 'E' },
+  okc: { zh: '俄克拉荷马城雷霆', abbr: 'OKC', color: '#007AC1', league: 'nba', strength: 86, conf: 'W' },
+  dal: { zh: '达拉斯独行侠', abbr: 'DAL', color: '#00538C', league: 'nba', strength: 84, conf: 'W' },
+  pho: { zh: '菲尼克斯太阳', abbr: 'PHX', color: '#E56020', league: 'nba', strength: 81, conf: 'W' },
+  phi: { zh: '费城76人', abbr: 'PHI', color: '#006BB6', league: 'nba', strength: 83, conf: 'E' },
+  nyk: { zh: '纽约尼克斯', abbr: 'NYK', color: '#F58426', league: 'nba', strength: 82, conf: 'E' },
+  lac: { zh: '洛杉矶快船', abbr: 'LAC', color: '#C8102E', league: 'nba', strength: 83, conf: 'W' },
+  cle: { zh: '克利夫兰骑士', abbr: 'CLE', color: '#860038', league: 'nba', strength: 82, conf: 'E' },
+  sas: { zh: '圣安东尼奥马刺', abbr: 'SAS', color: '#C4CED4', league: 'nba', strength: 81, conf: 'W' },
+  hou: { zh: '休斯顿火箭', abbr: 'HOU', color: '#CE1141', league: 'nba', strength: 80, conf: 'W' },
   hou: { zh: '休斯顿火箭', abbr: 'HOU', color: '#CE1141', league: 'nba', strength: 80 },
   // 欧洲篮球联赛
   pan: { zh: '帕纳辛奈科斯', abbr: 'PAO', color: '#046A38', league: 'eur', strength: 88 },
@@ -2091,6 +2092,17 @@ function makeContract(player, team, league, opts = {}) {
     tier = 'rookie';
     years = 4;
     annualUsd = rookieSalaryByPick(opts.draftPick);
+  } else if (opts.freeAgent) {
+    // 自由球员首次签约：年轻球员给新秀级，否则给中产（避免首签即顶薪）
+    if (player.age <= 22) {
+      tier = 'rookie';
+      years = 3;
+      annualUsd = rookieSalaryByPick(15); // 首轮中段
+    } else {
+      tier = 'rotation'; // 中产/轮换级
+      years = 2 + Math.floor(Math.random() * 2);
+      annualUsd = CONTRACT_YEARLY[tier];
+    }
   } else {
     tier = contractTierOf(player.overall);
     years = contractYearsOf(tier, player.age);
@@ -2484,12 +2496,20 @@ function transferChooseEvent(state) {
     type: 'transfer_choose',
     title: '新东家',
     text: '经纪人摆出几份报价，你看着那些队徽，做了一个决定。',
-    options: picked.map(t => ({
-      id: `tf-${t.id}`,
-      label: `${t.zh}`,
-      hint: `${LEAGUES[t.league].zh} · 强度 ${t.strength}${t.id === state.player.foreignDreamTeamId || t.id === state.player.domesticDreamTeamId ? ' · 你的儿时主队！' : ''}`,
-      teamId: t.id,
-    })),
+    options: [
+      ...picked.map(t => ({
+        id: `tf-${t.id}`,
+        label: `${t.zh}`,
+        hint: `${LEAGUES[t.league].zh} · 强度 ${t.strength}${t.id === state.player.foreignDreamTeamId || t.id === state.player.domesticDreamTeamId ? ' · 你的儿时主队！' : ''}`,
+        teamId: t.id,
+      })),
+      ...(cur ? [{
+        id: 'stay',
+        label: `留在${cur.zh}`,
+        hint: '继续留在这支球队',
+        teamId: cur.id,
+      }] : []),
+    ],
   };
 }
 
@@ -3190,31 +3210,118 @@ function buildBoxScore(roster, teamScore, me, rng, isHome) {
   return box;
 }
 
-// ---------- 季后赛状态机 ----------
+// ---------- 季后赛状态机（完整：首轮/次轮/分区决赛/总决赛，BO7） ----------
+// 生成东西部排行（供 UI 展示与种子确定）
+function generateStandings(state) {
+  const season = state.season;
+  if (!season) return null;
+  const isNba = season.kind === 'pro' && LEAGUES[season.leagueId] && LEAGUES[season.leagueId].tier === 1;
+  if (!isNba) {
+    // 非 NBA 联赛：简化排行（按 strength）
+    const teams = Object.values(TEAMS).filter(t => t.league === season.leagueId);
+    return { single: teams.map(t => ({
+      id: t.id, zh: t.zh, abbr: t.abbr, color: t.color, strength: t.strength,
+      wins: Math.round(t.strength * 0.9), losses: Math.round(82 - t.strength * 0.9),
+      isMe: t.id === season.teamId,
+    })).sort((a, b) => b.wins - a.wins) };
+  }
+  // NBA：东西部排行
+  const myWins = season.wins, myLosses = season.losses;
+  const myTeam = TEAMS[season.teamId];
+  const confs = { E: [], W: [] };
+  Object.values(TEAMS).filter(t => t.league === 'nba').forEach(t => {
+    const c = t.conf || 'W';
+    let wins, losses;
+    if (t.id === season.teamId) { wins = myWins; losses = myLosses; }
+    else {
+      // 按 strength 估算战绩（含随机）
+      const p = clamp((t.strength - 70) / 30, 0.35, 0.8);
+      wins = Math.round(82 * p + (Math.random() * 6 - 3));
+      losses = 82 - wins;
+    }
+    confs[c].push({ id: t.id, zh: t.zh, abbr: t.abbr, color: t.color, strength: t.strength, wins, losses, isMe: t.id === season.teamId });
+  });
+  confs.E.sort((a, b) => b.wins - a.wins);
+  confs.W.sort((a, b) => b.wins - a.wins);
+  return confs;
+}
+
 function beginPlayoffs(state, team) {
   const season = state.season;
-  const winPct = season.totalGames > 0 ? season.wins / season.totalGames : 0;
-  // 对手：同联赛按 strength 排名，取比我们强或接近的对手
+  const isNba = season.kind === 'pro' && LEAGUES[season.leagueId] && LEAGUES[season.leagueId].tier === 1;
+  // 生成对手序列：按强度从低到高（首轮弱→总决赛强）
   const league = LEAGUES[team.league];
   const opps = Object.values(TEAMS).filter(t => t.league === team.league && t.id !== team.id)
     .sort((a, b) => b.strength - a.strength);
-  const opp = opps[0] || Object.values(TEAMS).find(t => t.id !== team.id);
   const rounds = [];
-  // 简化：3 轮（首轮/分区决赛/总决赛），每轮对手强度递增
-  for (let r = 0; r < 3; r++) {
-    const idx = Math.min(r + (winPct >= 0.7 ? r : r + 1), opps.length - 1);
-    rounds.push(opps[idx] ? opps[idx].id : opp.id);
+  if (isNba) {
+    // 东西部各队进季后赛；玩家按战绩排种子，对手按强度递进（每轮不同队）
+    const myWinPct = season.totalGames > 0 ? season.wins / season.totalGames : 0;
+    const conf = team.conf || 'W';
+    const confTeams = Object.values(TEAMS).filter(t => t.league === 'nba' && (t.conf || 'W') === conf && t.id !== team.id)
+      .sort((a, b) => b.strength - a.strength);
+    // 从弱到强取每轮对手（确保不同）
+    const oppPool = [...confTeams].sort((a, b) => a.strength - b.strength); // 弱→强
+    const r1 = oppPool[0];
+    const r2 = oppPool[oppPool.length > 2 ? 1 : 0];
+    const r3 = oppPool[oppPool.length > 2 ? oppPool.length - 1 : (oppPool[1] || oppPool[0])];
+    // 总决赛：另一分区最强
+    const otherConf = conf === 'E' ? 'W' : 'E';
+    const otherBest = Object.values(TEAMS).filter(t => t.league === 'nba' && (t.conf || 'W') === otherConf)
+      .sort((a, b) => b.strength - a.strength)[0];
+    rounds.push(
+      r1 ? r1.id : (opps[0] ? opps[0].id : null),
+      r2 ? r2.id : (r1 ? r1.id : null),
+      r3 ? r3.id : (r2 ? r2.id : null),
+      otherBest ? otherBest.id : null,
+    );
+    // 去重并保证轮次完整
+    const seen = new Set();
+    const clean = rounds.map(id => {
+      if (!id || seen.has(id)) {
+        // 换一个未用过的对手
+        const alt = opps.find(t => !seen.has(t.id) && t.id !== id);
+        if (alt) { seen.add(alt.id); return alt.id; }
+        return null;
+      }
+      seen.add(id);
+      return id;
+    });
+    state.playoffs = {
+      isNba: true,
+      conf,
+      round: 0,
+      rounds: clean.filter(Boolean),
+      roundNames: ['分区首轮', '分区次轮', '分区决赛', '总决赛'],
+      myWins: 0,
+      oppWins: 0,
+      currentOppId: clean.filter(Boolean)[0],
+      games: [],
+      done: false,
+      eliminated: false,
+      champion: false,
+    };
+  } else {
+    // 非 NBA：3 轮简化
+    const winPct = season.totalGames > 0 ? season.wins / season.totalGames : 0;
+    for (let r = 0; r < 3; r++) {
+      const idx = Math.min(r + (winPct >= 0.7 ? r : r + 1), opps.length - 1);
+      rounds.push(opps[idx] ? opps[idx].id : (opps[0] ? opps[0].id : null));
+    }
+    state.playoffs = {
+      isNba: false,
+      round: 0,
+      rounds: rounds.filter(Boolean),
+      roundNames: ['半决赛', '分区决赛', '总决赛'],
+      myWins: 0,
+      oppWins: 0,
+      currentOppId: rounds.filter(Boolean)[0],
+      games: [],
+      done: false,
+      eliminated: false,
+      champion: false,
+    };
   }
-  state.playoffs = {
-    round: 0,
-    rounds,
-    myWins: 0,
-    oppWins: 0,
-    currentOppId: rounds[0],
-    games: [],
-    done: false,
-    eliminated: false,
-  };
   return state.playoffs;
 }
 
@@ -3227,6 +3334,27 @@ function simPlayoffGames(state, n = 1) {
   const myTeam = teamTable[season.teamId];
   const rng = mulberry32(state.rngState ^ 0x7a7a);
   for (let k = 0; k < n && !po.done; k++) {
+    // 附加赛：先打 1 场生死战，赢了进首轮，输了出局
+    if (po.playIn && po.playInResult == null) {
+      const opp = teamTable[po.currentOppId];
+      const game = simOneLeagueGame(state, season, myTeam, opp, true, rng);
+      po.games.push(game);
+      out.push(game);
+      if (game.win) {
+        po.playInResult = true;
+        // 进入首轮（去掉附加赛轮次）
+        po.roundNames = po.roundNames.slice(1);
+        po.round = 0;
+        po.myWins = 0;
+        po.oppWins = 0;
+        po.currentOppId = po.rounds[0];
+      } else {
+        po.done = true;
+        po.eliminated = true;
+        po.playInResult = false;
+      }
+      continue;
+    }
     const opp = teamTable[po.currentOppId];
     const game = simOneLeagueGame(state, season, myTeam, opp, k % 2 === 0, rng);
     po.games.push(game);
@@ -3316,9 +3444,19 @@ function finishSeason(state) {
   if (po && po.done) {
     if (po.champion) result = { league: 'champion' };
     else if (po.eliminated) {
-      // 在某一轮被淘汰：round 0=首轮出局, 1=半决赛, 2=总决赛
-      const rnd = po.round;
-      result = { league: rnd === 0 ? 'quarters' : rnd === 1 ? 'semis' : 'final' };
+      // 附加赛出局 = 未进季后赛
+      if (po.playInResult === false) {
+        result = { league: 'missed' };
+      } else {
+        // 在某一轮被淘汰
+        const rnd = po.round;
+        const isNba = !!po.isNba;
+        if (isNba) {
+          result = { league: rnd >= 3 ? 'final' : rnd === 2 ? 'final' : rnd === 1 ? 'semis' : 'quarters' };
+        } else {
+          result = { league: rnd === 0 ? 'quarters' : rnd === 1 ? 'semis' : 'final' };
+        }
+      }
     }
   } else if (season.kind === 'pro' && !po) {
     // 职业未进季后赛：missed
@@ -3646,9 +3784,15 @@ function generateLeagueAwards(state) {
   const mvp = candidates.slice().sort((a, b) => mvpScore(b) - mvpScore(a))[0];
   awards.push({ key: 'mvp', zh: '常规赛MVP', winner: makeLine(mvp) });
 
-  // 最佳阵容 1/2/3 阵（按综合得分取前 15，分三阵）
+  // 最佳阵容 1/2/3 阵（按综合得分取前 15，分三阵）；MVP 得主强制进一阵
   const allNbaScore = (p) => p.avg.pts + p.avg.reb * 0.8 + p.avg.ast * 0.8 + p.avg.stl * 1.2 + p.avg.blk * 1.2 + p.ovr * 0.2;
-  const ranked = candidates.slice().sort((a, b) => allNbaScore(b) - allNbaScore(a)).slice(0, 15);
+  let ranked = candidates.slice().sort((a, b) => allNbaScore(b) - allNbaScore(a));
+  // MVP 优先（真实规则：MVP 几乎必然一阵）
+  if (mvp) {
+    ranked = ranked.filter(p => p !== mvp);
+    ranked.unshift(mvp);
+  }
+  ranked = ranked.slice(0, 15);
   const teamNames = ['最佳阵容一阵', '最佳阵容二阵', '最佳阵容三阵'];
   const teamKeys = ['all_nba_1', 'all_nba_2', 'all_nba_3'];
   for (let i = 0; i < 3 && ranked.length >= (i + 1) * 5; i++) {
@@ -3709,7 +3853,8 @@ function tryNBAJump(state) {
     state.currentTeamId = team.id;
     state.contractTeamId = team.id;
     state.stage = 'pro';
-    state.player.contract = makeContract(state.player, team, LEAGUES.nba);
+    // 冲击 NBA 签约：按能力给合理合同（非新秀顶薪）
+    state.player.contract = makeContract(state.player, team, LEAGUES.nba, { freeAgent: true });
     state.legacyLines.push(`你凭一己之力打进了 NBA，加盟${team.zh}。`);
     state.lastEventOutcome = { eventKey: 'nba_jump', optionKey: 'jump', text: `冲击成功！你得到了 ${team.zh} 的合同，正式登陆 NBA。`, kind: 'positive' };
     return { ok: true, team, contract: state.player.contract };
@@ -3879,7 +4024,7 @@ function step(state) {
 
   // 常规赛打完 → 决定是否进季后赛
   if (!state.playoffs) {
-    // 胜率足够则进季后赛，否则直接结束
+    // 胜率决定：<45% 无缘季后赛；45-55% 打附加赛；≥55% 直接晋级
     const winPct = state.season.totalGames > 0 ? state.season.wins / state.season.totalGames : 0;
     const made = winPct >= 0.45 && state.season.losses < state.season.totalGames;
     if (!made) {
@@ -3892,7 +4037,13 @@ function step(state) {
       }
       return settleSeasonResult(state, snapshot, team, age, seasonModifiers, suspended);
     }
-    beginPlayoffs(state, team);
+    const po = beginPlayoffs(state, team);
+    // 附加赛：胜率 45-55% 先打一场生死战（赢了进首轮，输了出局）
+    po.playIn = winPct < 0.55;
+    if (po.playIn) {
+      po.roundNames = ['附加赛', ...po.roundNames];
+      po.playInResult = null;
+    }
     return { state, screen: 'playoffs' };
   }
 
@@ -4310,6 +4461,15 @@ function decide(state, optionId) {
   }
 
   if (ev.type === 'transfer_choose') {
+    if (optionId === 'stay') {
+      // 选择留在本队
+      const cur = state.currentTeamId ? TEAMS[state.currentTeamId] : null;
+      state.lastEventOutcome = { eventKey: 'transfer', optionKey: 'stay', text: cur ? `你选择留在${cur.zh}，拒绝了所有报价。` : '你选择留队。', kind: 'neutral' };
+      state.step += 1;
+      state.currentEvent = null;
+      state.pendingTransfer = null;
+      return { state, screen: 'career' };
+    }
     const from = state.currentTeamId ? TEAMS[state.currentTeamId] : null;
     const team = TEAMS[opt.teamId];
     state.transfers.push({ age: state.player.age, from: from ? from.id : null, to: team.id });
@@ -5059,7 +5219,7 @@ function galleryState() {
   }
   return { unlocked, total: TITLES.length };
 }
-  __M['engine.js'] = { xmur3, mulberry32, nextRng, roll, chance, pickWeighted, genSeed, fmtMoney, fmtInt, fmtAvg, percentileOf, clamp, teamById, leagueById, countryById, ROLE_KEYS, roleName, roleFactor, tournamentSchedule, newGame, marketValueOf, salaryOf, makeContract, renewContract, contractTierZh, upgradeAttr, recalcOverall, beginSeason, setNbaPool, nbaPoolTeam, simNextGames, requestTrade, seasonOffseason, starRetirements, beginPlayoffs, simPlayoffGames, getMyRoster, finishSeason, generateLeagueAwards, nbaJumpInfo, tryNBAJump, step, decide, makeGameContext, applyGameResult, maxOverall, peakSeason, teamById2, clubsOf, trophyCounts, trophyZh, awardZh, tournamentZh, resultZh, computeTitles, nationalLine, finalize, buildSummary, isLight, endingZh, saveState, loadState, clearState, saveArchive, loadArchive, galleryState };
+  __M['engine.js'] = { xmur3, mulberry32, nextRng, roll, chance, pickWeighted, genSeed, fmtMoney, fmtInt, fmtAvg, percentileOf, clamp, teamById, leagueById, countryById, ROLE_KEYS, roleName, roleFactor, tournamentSchedule, newGame, marketValueOf, salaryOf, makeContract, renewContract, contractTierZh, upgradeAttr, recalcOverall, beginSeason, setNbaPool, nbaPoolTeam, simNextGames, requestTrade, seasonOffseason, starRetirements, generateStandings, beginPlayoffs, simPlayoffGames, getMyRoster, finishSeason, generateLeagueAwards, nbaJumpInfo, tryNBAJump, step, decide, makeGameContext, applyGameResult, maxOverall, peakSeason, teamById2, clubsOf, trophyCounts, trophyZh, awardZh, tournamentZh, resultZh, computeTitles, nationalLine, finalize, buildSummary, isLight, endingZh, saveState, loadState, clearState, saveArchive, loadArchive, galleryState };
   })();
 
   // ===== ui.js (deps: data.js,build.js,simEngine.js,engine.js) =====
@@ -5395,6 +5555,26 @@ function seasonHTML(s) {
       <span class="mt-avg num">${p.avg.pts}分 ${p.avg.reb}板</span>
     </button>`).join('');
 
+  // 实时联盟排行（NBA 东西部 / 其他单区）
+  let liveStandings = '';
+  try {
+    const st = E.generateStandings(s);
+    if (st) {
+      const renderConf2 = (title, teams) => teams ? `
+        <div class="std-conf">
+          <div class="std-title">${title}</div>
+          ${teams.slice(0, 8).map(t => `
+            <div class="std-row ${t.isMe ? 'me' : ''}">
+              <span class="std-rank">${t.isMe ? '⭐' : ''}</span>
+              <span class="std-name">${esc(t.zh)}</span>
+              <span class="std-rec num">${t.wins}-${t.losses}</span>
+            </div>`).join('')}
+        </div>` : '';
+      if (st.E && st.W) liveStandings = `<div class="std-grid">${renderConf2('东部', st.E)}${renderConf2('西部', st.W)}</div>`;
+      else if (st.single) liveStandings = `<div class="std-grid">${renderConf2('联赛', st.single)}</div>`;
+    }
+  } catch (e) {}
+
   return shell(`
     ${topbarHTML()}
     <div class="scroll" style="padding-top:6px">
@@ -5406,6 +5586,8 @@ function seasonHTML(s) {
         <div class="season-progress"><div class="sp-bar" style="width:${pct}%"></div><span class="sp-txt">${season.played}/${season.totalGames}</span></div>
         <div class="season-record"><span class="w">${season.wins}胜</span><span class="l">${season.losses}负</span></div>
       </div>
+
+      ${liveStandings ? `<div class="label" style="margin-top:12px">📊 联盟排名</div>${liveStandings}` : ''}
 
       ${(s.pendingTrades || []).length ? `
       <div class="label" style="margin-top:12px">📢 联盟交易</div>
@@ -5598,8 +5780,9 @@ function playoffsHTML(s) {
   const po = s.playoffs;
   const team = TEAMS[s.currentTeamId] || NCAA_TEAMS[s.currentTeamId] || null;
   const opp = TEAMS[po.currentOppId] || NCAA_TEAMS[po.currentOppId] || null;
-  const roundNames = ['首轮', '分区半决赛', '总决赛'];
-  const roundName = roundNames[po.round] || `第${po.round + 1}轮`;
+  const roundNames = po.roundNames || ['首轮', '分区半决赛', '总决赛'];
+  const inPlayIn = po.playIn && po.playInResult == null;
+  const roundName = inPlayIn ? '附加赛 · 生死战' : (roundNames[po.round] || `第${po.round + 1}轮`);
   const recent = po.games.slice(-6).reverse().map(g => `
     <div class="season-game ${g.win ? 'win' : 'lose'}">
       <span class="sg-r">${g.home ? '主' : '客'}${g.win ? ' W' : ' L'}</span>
@@ -5607,6 +5790,30 @@ function playoffsHTML(s) {
       <span class="sg-score num">${g.myScore} : ${g.oppScore}</span>
       <span class="sg-me num">我 ${g.my.pts}分</span>
     </div>`).join('') || '<div class="empty">系列赛还没开打</div>';
+
+  // 东西部/联盟排行
+  let standingsHTML = '';
+  try {
+    const st = E.generateStandings(s);
+    if (st) {
+      const renderConf = (title, teams) => teams ? `
+        <div class="std-conf">
+          <div class="std-title">${title}</div>
+          ${teams.map(t => `
+            <div class="std-row ${t.isMe ? 'me' : ''}">
+              <span class="std-rank">${t.isMe ? '⭐' : ''}</span>
+              <span class="std-name">${esc(t.zh)}</span>
+              <span class="std-rec num">${t.wins}-${t.losses}</span>
+            </div>`).join('')}
+        </div>` : '';
+      if (st.E && st.W) {
+        standingsHTML = `<div class="std-grid">${renderConf('东部', st.E)}${renderConf('西部', st.W)}</div>`;
+      } else if (st.single) {
+        standingsHTML = `<div class="std-grid">${renderConf('联赛', st.single)}</div>`;
+      }
+    }
+  } catch (e) {}
+
   return shell(`
     ${topbarHTML()}
     <div class="scroll" style="padding-top:6px">
@@ -5619,6 +5826,27 @@ function playoffsHTML(s) {
         </div>
         <div class="po-best">BO7 · 先赢 4 场晋级</div>
       </div>
+
+      ${po.isNba && po.rounds && po.rounds.length ? `
+      <div class="label" style="margin-top:12px">🗺️ 季后赛对阵图</div>
+      <div class="bracket">
+        ${po.roundNames.map((rn, i) => {
+          const oppTeam = TEAMS[po.rounds[i]] || null;
+          const isCur = i === po.round;
+          const done = i < po.round;
+          const champ = po.done && po.champion && i === po.roundNames.length - 1;
+          return `<div class="bracket-round ${isCur ? 'cur' : done ? 'done' : ''}">
+            <div class="br-name">${rn}${champ ? ' 🏆' : ''}</div>
+            <div class="br-game">
+              <div class="br-team ${true ? 'win' : ''}">${esc(team ? team.zh : '')}</div>
+              <div class="br-vs">VS</div>
+              <div class="br-team">${oppTeam ? esc(oppTeam.zh) : '对手'}</div>
+            </div>
+          </div>`;
+        }).join('<div class="br-arrow">→</div>')}
+      </div>` : ''}
+
+      ${po.isNba && standingsHTML ? `<div class="label" style="margin-top:12px">东西部排名</div>${standingsHTML}` : ''}
 
       <div class="label" style="margin-top:12px">系列赛比分</div>
       <div class="season-games">${recent}</div>

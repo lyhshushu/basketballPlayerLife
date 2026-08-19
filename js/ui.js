@@ -327,6 +327,26 @@ function seasonHTML(s) {
       <span class="mt-avg num">${p.avg.pts}分 ${p.avg.reb}板</span>
     </button>`).join('');
 
+  // 实时联盟排行（NBA 东西部 / 其他单区）
+  let liveStandings = '';
+  try {
+    const st = E.generateStandings(s);
+    if (st) {
+      const renderConf2 = (title, teams) => teams ? `
+        <div class="std-conf">
+          <div class="std-title">${title}</div>
+          ${teams.slice(0, 8).map(t => `
+            <div class="std-row ${t.isMe ? 'me' : ''}">
+              <span class="std-rank">${t.isMe ? '⭐' : ''}</span>
+              <span class="std-name">${esc(t.zh)}</span>
+              <span class="std-rec num">${t.wins}-${t.losses}</span>
+            </div>`).join('')}
+        </div>` : '';
+      if (st.E && st.W) liveStandings = `<div class="std-grid">${renderConf2('东部', st.E)}${renderConf2('西部', st.W)}</div>`;
+      else if (st.single) liveStandings = `<div class="std-grid">${renderConf2('联赛', st.single)}</div>`;
+    }
+  } catch (e) {}
+
   return shell(`
     ${topbarHTML()}
     <div class="scroll" style="padding-top:6px">
@@ -338,6 +358,8 @@ function seasonHTML(s) {
         <div class="season-progress"><div class="sp-bar" style="width:${pct}%"></div><span class="sp-txt">${season.played}/${season.totalGames}</span></div>
         <div class="season-record"><span class="w">${season.wins}胜</span><span class="l">${season.losses}负</span></div>
       </div>
+
+      ${liveStandings ? `<div class="label" style="margin-top:12px">📊 联盟排名</div>${liveStandings}` : ''}
 
       ${(s.pendingTrades || []).length ? `
       <div class="label" style="margin-top:12px">📢 联盟交易</div>
@@ -530,8 +552,9 @@ function playoffsHTML(s) {
   const po = s.playoffs;
   const team = TEAMS[s.currentTeamId] || NCAA_TEAMS[s.currentTeamId] || null;
   const opp = TEAMS[po.currentOppId] || NCAA_TEAMS[po.currentOppId] || null;
-  const roundNames = ['首轮', '分区半决赛', '总决赛'];
-  const roundName = roundNames[po.round] || `第${po.round + 1}轮`;
+  const roundNames = po.roundNames || ['首轮', '分区半决赛', '总决赛'];
+  const inPlayIn = po.playIn && po.playInResult == null;
+  const roundName = inPlayIn ? '附加赛 · 生死战' : (roundNames[po.round] || `第${po.round + 1}轮`);
   const recent = po.games.slice(-6).reverse().map(g => `
     <div class="season-game ${g.win ? 'win' : 'lose'}">
       <span class="sg-r">${g.home ? '主' : '客'}${g.win ? ' W' : ' L'}</span>
@@ -539,6 +562,30 @@ function playoffsHTML(s) {
       <span class="sg-score num">${g.myScore} : ${g.oppScore}</span>
       <span class="sg-me num">我 ${g.my.pts}分</span>
     </div>`).join('') || '<div class="empty">系列赛还没开打</div>';
+
+  // 东西部/联盟排行
+  let standingsHTML = '';
+  try {
+    const st = E.generateStandings(s);
+    if (st) {
+      const renderConf = (title, teams) => teams ? `
+        <div class="std-conf">
+          <div class="std-title">${title}</div>
+          ${teams.map(t => `
+            <div class="std-row ${t.isMe ? 'me' : ''}">
+              <span class="std-rank">${t.isMe ? '⭐' : ''}</span>
+              <span class="std-name">${esc(t.zh)}</span>
+              <span class="std-rec num">${t.wins}-${t.losses}</span>
+            </div>`).join('')}
+        </div>` : '';
+      if (st.E && st.W) {
+        standingsHTML = `<div class="std-grid">${renderConf('东部', st.E)}${renderConf('西部', st.W)}</div>`;
+      } else if (st.single) {
+        standingsHTML = `<div class="std-grid">${renderConf('联赛', st.single)}</div>`;
+      }
+    }
+  } catch (e) {}
+
   return shell(`
     ${topbarHTML()}
     <div class="scroll" style="padding-top:6px">
@@ -551,6 +598,27 @@ function playoffsHTML(s) {
         </div>
         <div class="po-best">BO7 · 先赢 4 场晋级</div>
       </div>
+
+      ${po.isNba && po.rounds && po.rounds.length ? `
+      <div class="label" style="margin-top:12px">🗺️ 季后赛对阵图</div>
+      <div class="bracket">
+        ${po.roundNames.map((rn, i) => {
+          const oppTeam = TEAMS[po.rounds[i]] || null;
+          const isCur = i === po.round;
+          const done = i < po.round;
+          const champ = po.done && po.champion && i === po.roundNames.length - 1;
+          return `<div class="bracket-round ${isCur ? 'cur' : done ? 'done' : ''}">
+            <div class="br-name">${rn}${champ ? ' 🏆' : ''}</div>
+            <div class="br-game">
+              <div class="br-team ${true ? 'win' : ''}">${esc(team ? team.zh : '')}</div>
+              <div class="br-vs">VS</div>
+              <div class="br-team">${oppTeam ? esc(oppTeam.zh) : '对手'}</div>
+            </div>
+          </div>`;
+        }).join('<div class="br-arrow">→</div>')}
+      </div>` : ''}
+
+      ${po.isNba && standingsHTML ? `<div class="label" style="margin-top:12px">东西部排名</div>${standingsHTML}` : ''}
 
       <div class="label" style="margin-top:12px">系列赛比分</div>
       <div class="season-games">${recent}</div>

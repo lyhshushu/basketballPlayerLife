@@ -871,3 +871,23 @@ select.team-select {
 .rookie-item .rk-pos { font-size: 10px; font-weight: 800; color: var(--accent-2); }
 .rookie-item .rk-ovr { font-size: 13px; font-weight: 900; color: var(--amber); }
 .rookie-item .rk-star { font-size: 9px; font-weight: 900; color: var(--amber); }
+/* ================= 联盟排行 ================= */
+.std-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.std-conf { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 8px; }
+.std-title { font-size: 11px; font-weight: 900; color: var(--accent-2); text-align: center; margin-bottom: 4px; }
+.std-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 6px; font-size: 11px; }
+.std-row.me { background: rgba(16,185,129,0.12); color: var(--accent-2); font-weight: 800; }
+.std-row .std-rank { min-width: 14px; }
+.std-row .std-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.std-row .std-rec { font-weight: 800; color: var(--text-2); }
+/* ================= 季后赛对阵图 ================= */
+.bracket { display: flex; align-items: center; gap: 6px; overflow-x: auto; padding-bottom: 6px; }
+.bracket-round { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; min-width: 92px; }
+.bracket-round.cur { border-color: var(--accent); }
+.bracket-round.done { border-color: rgba(16,185,129,0.4); }
+.bracket-round .br-name { font-size: 10px; font-weight: 900; color: var(--accent-2); text-align: center; margin-bottom: 4px; }
+.bracket-round .br-game { font-size: 10px; text-align: center; }
+.bracket-round .br-team { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 88px; }
+.bracket-round .br-team.win { color: var(--amber); }
+.bracket-round .br-vs { font-size: 8px; color: var(--text-3); margin: 2px 0; }
+.br-arrow { color: var(--text-3); font-size: 14px; flex-shrink: 0; }
