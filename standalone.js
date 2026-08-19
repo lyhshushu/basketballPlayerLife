@@ -2027,51 +2027,104 @@ function salaryOf(marketValue, role) {
   return Math.round(marketValue * ratio);
 }
 
-// NBA 风格年薪（单位：万人民币，1 美元 ≈ 7 元）
-// 顶薪 ≈ 5000 万美元 ≈ 35000 万，中产 ≈ 1000 万刀 ≈ 7000 万，底薪 ≈ 200 万刀 ≈ 1400 万
-function nbaSalaryOf(overall, role, league) {
-  const tierFactor = { 1: 1.0, 2: 0.6, 3: 0.28, 4: 0.14 }[league && league.tier] ?? 0.2;
-  let base;
-  if (overall >= 96) base = 5200;       // 超级巨星顶薪（万美元）
-  else if (overall >= 92) base = 4400;  // 顶薪
-  else if (overall >= 88) base = 3400;  // 准顶薪
-  else if (overall >= 84) base = 2600;  // 优质首发
-  else if (overall >= 80) base = 1900;  // 首发
-  else if (overall >= 75) base = 1200;  // 轮换
-  else if (overall >= 68) base = 600;   // 角色
-  else base = 280;                      // 底薪/边缘
-  const roleFactor = { edge: 0.7, rotation: 0.9, starter: 1.0, star: 1.15, superstar: 1.3 }[role] ?? 0.9;
-  return Math.round(base * roleFactor * tierFactor * 7); // 万人民币
+// ---------- 合同系统（现实 NBA 劳资风格） ----------
+// 薪资单位：万美元/年；1 美元 ≈ 7 元人民币
+// 新秀合同：按选秀顺位分档，4 年递增（0-2 年保障，第 3/4 年球队选项简化处理）
+function rookieSalaryByPick(pick) {
+  if (pick == null) return 300;
+  if (pick <= 1) return 1050;
+  if (pick <= 3) return 850;
+  if (pick <= 10) return 550;
+  if (pick <= 15) return 380;
+  if (pick <= 30) return 220;
+  return 120; // 次轮
 }
 
-// 合同：初始签约（金额万美元/年，年限 2-5 年）
-function makeContract(player, team, league) {
-  const role = 'starter';
-  const years = player.overall >= 85 ? 5 : player.overall >= 75 ? 4 : player.overall >= 68 ? 3 : 2;
+// 按能力签合同：顶薪/准顶薪/中产/底薪
+function contractTierOf(overall) {
+  if (overall >= 94) return 'max';        // 超级顶薪（35%工资帽）
+  if (overall >= 90) return 'near_max';   // 准顶薪（30%）
+  if (overall >= 86) return 'max_lite';   // 次顶薪（25%）
+  if (overall >= 82) return 'big';        // 大合同
+  if (overall >= 78) return 'starter';    // 首发级
+  if (overall >= 74) return 'rotation';   // 轮换级
+  if (overall >= 68) return 'role';       // 角色球员
+  return 'minimum';                       // 底薪
+}
+
+// 各档次年薪（万美元），对应现实 NBA 金额
+const CONTRACT_YEARLY = {
+  max: 4800,        // 顶薪 ~5000 万刀
+  near_max: 4100,
+  max_lite: 3400,
+  big: 2600,
+  starter: 1800,
+  rotation: 1200,
+  role: 700,
+  minimum: 260,     // 底薪 ~250 万刀
+};
+
+// 合同年限
+function contractYearsOf(tier, age) {
+  if (tier === 'minimum') return 1 + (Math.random() < 0.3 ? 1 : 0);
+  if (tier === 'role' || tier === 'rotation') return 2 + Math.floor(Math.random() * 2); // 2-3
+  if (tier === 'starter') return 3 + Math.floor(Math.random() * 2);                    // 3-4
+  return 4 + Math.floor(Math.random() * 2);                                            // 4-5（大合同）
+}
+
+// 签约：新秀 or 自由球员/续约
+function makeContract(player, team, league, opts = {}) {
+  let years, annualUsd, tier;
+  if (opts.draftPick != null) {
+    // 新秀合同：按顺位
+    tier = 'rookie';
+    years = 4;
+    annualUsd = rookieSalaryByPick(opts.draftPick);
+  } else {
+    tier = contractTierOf(player.overall);
+    years = contractYearsOf(tier, player.age);
+    annualUsd = CONTRACT_YEARLY[tier];
+  }
+  // 联赛等级影响（NBA 全额，其他联赛打折）
+  const tierFactor = { 1: 1.0, 2: 0.6, 3: 0.3, 4: 0.16 }[league && league.tier] ?? 0.2;
+  annualUsd = Math.round(annualUsd * tierFactor);
   return {
     teamId: team.id,
     years,
     yearsLeft: years,
-    annualUsd: Math.round(nbaSalaryOf(player.overall, role, league) / 7), // 存万美元
+    annualUsd,
+    tier,
     startAge: player.age,
     extension: false,
+    draftPick: opts.draftPick != null ? opts.draftPick : null,
   };
 }
 
 // 续约/新签：按当前能力给下一份合同
 function renewContract(state, team, league) {
   const role = roleFor(state, team, state.player.age, {});
-  const annual = nbaSalaryOf(state.player.overall, role, league);
-  const years = state.player.overall >= 88 ? 5 : state.player.overall >= 75 ? 4 : 3;
+  const tier = contractTierOf(state.player.overall);
+  const annual = CONTRACT_YEARLY[tier];
+  const tierFactor = { 1: 1.0, 2: 0.6, 3: 0.3, 4: 0.16 }[league && league.tier] ?? 0.2;
+  const years = contractYearsOf(tier, state.player.age);
   state.player.contract = {
     teamId: team.id,
     years,
     yearsLeft: years,
-    annualUsd: Math.round(annual / 7),
+    annualUsd: Math.round(annual * tierFactor),
+    tier,
     startAge: state.player.age,
     extension: true,
   };
   return state.player.contract;
+}
+
+function contractTierZh(tier) {
+  const map = {
+    rookie: '新秀合同', max: '超级顶薪', near_max: '顶薪', max_lite: '准顶薪',
+    big: '大合同', starter: '首发级合同', rotation: '轮换级合同', role: '角色合同', minimum: '底薪',
+  };
+  return map[tier] || tier;
 }
 
 // ---------- 事件池 ----------
@@ -2382,11 +2435,11 @@ function runDraft(state) {
   state.contractTeamId = team.id;
   state.stage = 'pro';
   state.pendingGame = null;
-  state.player.contract = makeContract(state.player, team, LEAGUES.nba);
+  state.player.contract = makeContract(state.player, team, LEAGUES.nba, { draftPick: pick });
   state.lastEventOutcome = {
     eventKey: 'draft_choice',
     optionKey: 'declare',
-    text: `选秀大会第 ${pick} 顺位，${team.zh} 选中了你！签下新秀合同。`,
+    text: `选秀大会第 ${pick} 顺位，${team.zh} 选中了你！签下新秀合同（${fmtMoney(state.player.contract.annualUsd * 7)}/年 × ${state.player.contract.years} 年）。`,
     kind: 'positive',
   };
   state.legacyLines.push(`第 ${pick} 顺位，你被 ${team.zh} 选中。`);
@@ -2543,7 +2596,9 @@ function simulateSeason(state, team, age, modifiers) {
     const grow = 1 + progress * 0.08;
     salary = (player.contract.annualUsd || 1000) * 7 * grow * (modifiers.salaryMult || 1);
   } else {
-    salary = nbaSalaryOf(player.overall, role, league) * (modifiers.salaryMult || 1);
+    const tier = contractTierOf(player.overall);
+    const tierFactor = { 1: 1.0, 2: 0.6, 3: 0.3, 4: 0.16 }[league && league.tier] ?? 0.2;
+    salary = CONTRACT_YEARLY[tier] * tierFactor * 7 * (modifiers.salaryMult || 1);
   }
   salary = Math.round(salary);
 
@@ -2715,6 +2770,29 @@ function makeSeasonRosters(state, team, schedule, kind) {
       if (opp) teams.set(g.oppId, makeSeasonRoster(state, opp, mulberry32(0x5678 + g.oppId.length)));
     }
   }
+  // 把上一休赛期生成的新秀注入各队 roster（NBA 联赛，每队最多 1 个新秀）
+  if (kind === 'pro' && state.rookiePool && state.rookiePool.length) {
+    const pool = state.rookiePool.slice();
+    for (const [tid, roster] of teams) {
+      if (!pool.length) break;
+      if (roster.length >= 12) continue;
+      const rookie = pool.shift();
+      if (rookie && !roster.some(p => p.name === rookie.name)) {
+        roster.push({
+          name: rookie.name,
+          pos: rookie.pos,
+          ovr: rookie.ovr,
+          starter: false,
+          isMe: false,
+          rookie: true,
+          attrs: rookie.attrs || attrsForOvr(rookie.ovr, rookie.pos),
+          g: 0, pts: 0, reb: 0, ast: 0, stl: 0, blk: 0,
+        });
+      }
+    }
+    // 已注入的从池中移除（避免每赛季重复）
+    state.rookiePool = [];
+  }
   return teams;
 }
 
@@ -2849,10 +2927,168 @@ function simNextGames(state, n = 1) {
     season.myStats.stl += game.my.stl;
     season.myStats.blk += game.my.blk;
     out.push(game);
+    // 赛季中交易：低概率触发，涉及 OVR>80 才提示
+    if (season.kind === 'pro' && rng() < 0.02) {
+      const trade = tryGenerateTrade(state, season, teamTable, rng);
+      if (trade) {
+        state.pendingTrades = state.pendingTrades || [];
+        state.pendingTrades.push(trade);
+      }
+    }
     if (season.played >= season.totalGames) season.done = true;
   }
   state.rngState = (rng() * 4294967296) >>> 0 || 12345;
   return out;
+}
+
+// 生成一笔联盟交易；若涉及能力>80 的球员则返回提示信息
+function tryGenerateTrade(state, season, teamTable, rng) {
+  const teams = Object.values(TEAMS).filter(t => t.league === season.leagueId);
+  if (teams.length < 3) return null;
+  const teamA = teams[Math.floor(rng() * teams.length)];
+  let teamB = teams[Math.floor(rng() * teams.length)];
+  let guard = 0;
+  while (teamB.id === teamA.id && guard++ < 10) teamB = teams[Math.floor(rng() * teams.length)];
+  // 从两队 roster 各取一个 OVR>75 的球员做交易
+  const rosterA = season.rosters.get(teamA.id) || [];
+  const rosterB = season.rosters.get(teamB.id) || [];
+  const candA = rosterA.filter(p => p.ovr >= 75 && !p.isMe);
+  const candB = rosterB.filter(p => p.ovr >= 75 && !p.isMe);
+  if (!candA.length || !candB.length) return null;
+  const pA = candA[Math.floor(rng() * candA.length)];
+  const pB = candB[Math.floor(rng() * candB.length)];
+  const notable = Math.max(pA.ovr, pB.ovr) >= 80;
+  return {
+    age: state.player.age,
+    teamA: teamA.zh,
+    teamB: teamB.zh,
+    fromAToB: pA.name,
+    fromBToA: pB.name,
+    ovrA: pA.ovr,
+    ovrB: pB.ovr,
+    notable,
+  };
+}
+
+// 玩家申请交易：按能力和球队意愿判定
+function requestTrade(state) {
+  const team = state.currentTeamId ? TEAMS[state.currentTeamId] : null;
+  if (!team || !state.season) return { ok: false, reason: '暂无球队' };
+  const season = state.season;
+  const rng = mulberry32(state.rngState);
+  // 能力越强、出场越多越容易达成
+  const p = clamp(0.15 + (state.player.overall - 70) * 0.012 + (season.myStats.g >= 40 ? 0.1 : 0), 0.1, 0.6);
+  const success = rng() < p;
+  state.rngState = (rng() * 4294967296) >>> 0 || 12345;
+  if (!success) {
+    return { ok: false, reason: 'chance', pct: Math.round(p * 100) };
+  }
+  // 成功：交易到同联赛另一支球队
+  const cands = Object.values(TEAMS).filter(t => t.league === team.league && t.id !== team.id);
+  const newTeam = cands[Math.floor(rng() * cands.length)] || team;
+  const from = team;
+  state.transfers.push({ age: state.player.age, from: from.id, to: newTeam.id });
+  state.currentTeamId = newTeam.id;
+  state.contractTeamId = newTeam.id;
+  state.contract.teamId = newTeam.id;
+  state.legacyLines.push(`你申请交易，被送到了${newTeam.zh}。`);
+  state.lastEventOutcome = {
+    eventKey: 'request_trade',
+    optionKey: 'trade',
+    text: `交易达成！你被送往 ${newTeam.zh}。`,
+    kind: 'positive',
+  };
+  return { ok: true, team: newTeam, from: from.zh };
+}
+
+// 赛季后交易/自由市场（在赛季完全结束后，进入下赛季前提示）
+function seasonOffseason(state) {
+  const team = state.currentTeamId ? TEAMS[state.currentTeamId] : null;
+  if (!team) return null;
+  // 赛季后交易窗口：生成几笔潜在交易 + 明星退役信息
+  const rng = mulberry32(state.rngState ^ 0x5eed);
+  const trades = [];
+  const teams = Object.values(TEAMS).filter(t => t.league === team.league && t.id !== team.id);
+  const poolTeams = __nbaPool ? Object.values(__nbaPool) : [];
+  for (let i = 0; i < 3; i++) {
+    const tA = teams[Math.floor(rng() * teams.length)];
+    const tB = teams[Math.floor(rng() * teams.length)];
+    if (!tA || !tB || tA.id === tB.id) continue;
+    let pA = null, pB = null;
+    if (poolTeams.length && rng() < 0.6) {
+      const tpA = poolTeams[Math.floor(rng() * poolTeams.length)];
+      const tpB = poolTeams[Math.floor(rng() * poolTeams.length)];
+      if (tpA && tpA.length) pA = tpA[Math.floor(rng() * tpA.length)];
+      if (tpB && tpB.length) pB = tpB[Math.floor(rng() * tpB.length)];
+    }
+    if (!pA || !pB) continue;
+    const nameA = pA.cname || pA.name;
+    const nameB = pB.cname || pB.name;
+    if (Math.max(pA.ovr, pB.ovr) < 78) continue;
+    trades.push({
+      teamA: tA.zh, teamB: tB.zh,
+      fromAToB: nameA, fromBToA: nameB,
+      ovrA: pA.ovr, ovrB: pB.ovr,
+    });
+  }
+  // 每年随机生成联盟新秀（选秀结果）
+  const rookies = generateDraftClass(state, rng);
+  state.rookiePool = state.rookiePool || [];
+  state.rookiePool.push(...rookies);
+  state.rngState = (rng() * 4294967296) >>> 0 || 12345;
+  return { trades, rookies };
+}
+
+// 生成一届选秀（新秀池），供休赛期展示与下一赛季 roster 使用
+function generateDraftClass(state, rng) {
+  const n = 6 + Math.floor(rng() * 5); // 6-10 名新秀
+  const allSurnames = [];
+  Object.values(COUNTRIES).forEach(c => { (c.surnames || []).forEach(s => allSurnames.push(s)); });
+  const posArr = ['PG', 'SG', 'SF', 'PF', 'C'];
+  const rookies = [];
+  const used = new Set();
+  for (let i = 0; i < n; i++) {
+    let name = allSurnames[Math.floor(rng() * allSurnames.length)] + '·' + (1 + Math.floor(rng() * 50));
+    let g2 = 0;
+    while (used.has(name) && g2++ < 20) name = allSurnames[Math.floor(rng() * allSurnames.length)] + '·' + (1 + Math.floor(rng() * 50));
+    used.add(name);
+    const pos = posArr[Math.floor(rng() * 5)];
+    // 新秀能力 60-82，少数天才更高
+    const ovr = Math.floor(rng() * 23) + 60;
+    const isStar = rng() < 0.12;
+    rookies.push({
+      name,
+      pos,
+      ovr: isStar ? Math.min(99, ovr + 8) : ovr,
+      draftAge: 19 + Math.floor(rng() * 3),
+      pick: i + 1,
+      attrs: attrsForOvr(ovr, pos),
+      isStar,
+    });
+  }
+  return rookies;
+}
+
+// 明星球员退役：赛季末生成退役名单（含真实球员）
+function starRetirements(state) {
+  if (!__nbaPool) return [];
+  const rng = mulberry32(state.rngState ^ 0xdead);
+  const retirements = [];
+  const poolPlayers = [];
+  Object.values(__nbaPool).forEach(arr => { if (Array.isArray(arr)) arr.forEach(p => poolPlayers.push(p)); });
+  // 从 33+ 岁高 OVR 真实球员中选 1-3 个退役
+  const candidates = poolPlayers.filter(p => p.ovr >= 80 && (p.age || 35) >= 33);
+  const n = Math.min(3, 1 + Math.floor(rng() * 3));
+  const picked = [];
+  for (let i = 0; i < n && candidates.length; i++) {
+    const p = candidates[Math.floor(rng() * candidates.length)];
+    if (!picked.includes(p.name)) picked.push(p);
+  }
+  picked.forEach(p => {
+    retirements.push({ name: p.cname || p.name, ovr: p.ovr });
+  });
+  state.rngState = (rng() * 4294967296) >>> 0 || 12345;
+  return retirements;
 }
 
 // 单场比赛：比分 + 我方 box + 对方 box
@@ -3534,6 +3770,12 @@ function step(state) {
   if (state.phase !== 'career') return { state, screen: 'summary' };
   if (state.currentEvent) return { state, screen: 'event' };
 
+  // 合同到期：优先弹出续约/自由市场事件
+  if (state.pendingContractExpiry) {
+    state.currentEvent = contractExpiryEvent(state);
+    return { state, screen: 'event' };
+  }
+
   const age = state.player.age;
   const modifiers = state.period.modifiers || {};
 
@@ -3752,25 +3994,94 @@ function settleSeasonResult(state, snapshot, team, age, modifiers, suspended) {
     if (ev) state.currentEvent = ev;
   }
 
-  // 合同推进：每赛季消耗一年，到期自动续约
+  // 合同推进：每赛季消耗一年，到期触发续约/自由市场事件
   if (state.player.contract) {
     state.player.contract.yearsLeft = Math.max(0, (state.player.contract.yearsLeft || 1) - 1);
     if (state.player.contract.yearsLeft <= 0) {
-      // 合同到期：留在当前队则续约
-      renewContract(state, team, LEAGUES[team.league]);
-      state.legacyLines.push(`${state.player.age} 岁，你和${team.zh}签下了一份新合同。`);
-      state.lastEventOutcome = {
-        eventKey: 'contract_renew',
-        optionKey: 'renew',
-        text: `赛季结束，${team.zh} 与你续约 ${state.player.contract.years} 年（年薪 ${fmtMoney(state.player.contract.annualUsd * 7)}）。`,
-        kind: 'positive',
+      // 合同到期：标记，由 step 弹出续约/自由市场事件
+      state.pendingContractExpiry = {
+        teamId: team.id,
+        leagueId: team.league,
       };
     }
-  } else {
+  } else if (state.player.age >= 20) {
     renewContract(state, team, LEAGUES[team.league]);
   }
 
   return { state, screen: 'banner', snapshot };
+}
+
+// 合同到期事件：续约 or 试水自由市场（可转会其他球队）
+function contractExpiryEvent(state) {
+  const team = state.currentTeamId ? TEAMS[state.currentTeamId] : null;
+  const league = team ? LEAGUES[team.league] : null;
+  const tier = contractTierOf(state.player.overall);
+  const annual = CONTRACT_YEARLY[tier];
+  const tierFactor = { 1: 1.0, 2: 0.6, 3: 0.3, 4: 0.16 }[league && league.tier] ?? 0.2;
+  const years = contractYearsOf(tier, state.player.age);
+  // 生成自由市场报价（其他球队）
+  const offers = [];
+  const cands = Object.values(TEAMS)
+    .filter(t => t.league === team.league && t.id !== team.id)
+    .sort((a, b) => b.strength - a.strength)
+    .slice(0, 3);
+  cands.forEach((t, i) => {
+    const offerTier = state.player.overall >= 88 && t.strength >= 82 ? 'near_max' : tier;
+    const offerAnnual = CONTRACT_YEARLY[offerTier];
+    offers.push({
+      id: `fa-${t.id}`,
+      teamId: t.id,
+      label: `${t.zh}（${LEAGUES[t.league].zh}）`,
+      hint: `${contractTierZh(offerTier)} · ${fmtMoney(offerAnnual * tierFactor * 7)}/年 × ${years} 年`,
+      annual: Math.round(offerAnnual * tierFactor),
+      years,
+    });
+  });
+  return {
+    id: `contract-expiry-${state.step}`,
+    type: 'contract_expiry',
+    title: '合同到期',
+    text: `赛季结束，你和${team.zh}的合同到期了。${contractTierZh(tier)}：${fmtMoney(annual * tierFactor * 7)}/年。是续约还是试试自由市场？`,
+    options: [
+      { id: 'renew', label: `与${team.zh}续约`, hint: `${contractTierZh(tier)} · ${fmtMoney(annual * tierFactor * 7)}/年 × ${years} 年` },
+      ...offers.map(o => ({ id: `fa-${o.teamId}`, label: `自由市场 · 加盟 ${o.label}`, hint: o.hint, teamId: o.teamId })),
+    ],
+    offers,
+    renewAnnual: Math.round(annual * tierFactor),
+    renewYears: years,
+    renewTier: tier,
+  };
+}
+
+function resolveContractExpiry(state, optionId, offerTeamId) {
+  state.pendingContractExpiry = null;
+  const team = state.currentTeamId ? TEAMS[state.currentTeamId] : null;
+  const league = team ? LEAGUES[team.league] : null;
+  if (optionId === 'renew' || !offerTeamId) {
+    renewContract(state, team, league);
+    state.lastEventOutcome = {
+      eventKey: 'contract_renew',
+      optionKey: 'renew',
+      text: `你和${team.zh}续约 ${state.player.contract.years} 年（${contractTierZh(state.player.contract.tier)} · ${fmtMoney(state.player.contract.annualUsd * 7)}/年）。`,
+      kind: 'positive',
+    };
+  } else {
+    const newTeam = TEAMS[offerTeamId];
+    const from = team;
+    state.transfers.push({ age: state.player.age, from: from ? from.id : null, to: newTeam.id });
+    state.currentTeamId = newTeam.id;
+    state.contractTeamId = newTeam.id;
+    state.player.contract = makeContract(state.player, newTeam, league);
+    state.legacyLines.push(`自由市场，你选择加盟${newTeam.zh}。`);
+    state.lastEventOutcome = {
+      eventKey: 'contract_renew',
+      optionKey: 'fa',
+      text: `你以自由球员身份加盟 ${newTeam.zh}，签下 ${contractTierZh(state.player.contract.tier)}（${fmtMoney(state.player.contract.annualUsd * 7)}/年 × ${state.player.contract.years} 年）。`,
+      kind: 'positive',
+    };
+  }
+  state.step += 1;
+  return { state, screen: 'career' };
 }
 
 function scheduleNextEvent(state) {
@@ -3937,6 +4248,14 @@ function decide(state, optionId) {
 
   if (ev.type === 'draft_choice') {
     return resolveDraftChoice(state, optionId);
+  }
+
+  if (ev.type === 'contract_expiry') {
+    // 续约 or 自由市场（加盟报价球队）
+    if (optionId !== 'renew') {
+      return resolveContractExpiry(state, optionId, opt.teamId);
+    }
+    return resolveContractExpiry(state, 'renew');
   }
 
   if (ev.type === 'sign_contract') {
@@ -4702,7 +5021,7 @@ function galleryState() {
   }
   return { unlocked, total: TITLES.length };
 }
-  __M['engine.js'] = { xmur3, mulberry32, nextRng, roll, chance, pickWeighted, genSeed, fmtMoney, fmtInt, fmtAvg, percentileOf, clamp, teamById, leagueById, countryById, ROLE_KEYS, roleName, roleFactor, tournamentSchedule, newGame, marketValueOf, salaryOf, nbaSalaryOf, makeContract, renewContract, upgradeAttr, recalcOverall, beginSeason, setNbaPool, nbaPoolTeam, simNextGames, beginPlayoffs, simPlayoffGames, getMyRoster, finishSeason, generateLeagueAwards, nbaJumpInfo, tryNBAJump, step, decide, makeGameContext, applyGameResult, maxOverall, peakSeason, teamById2, clubsOf, trophyCounts, trophyZh, awardZh, tournamentZh, resultZh, computeTitles, nationalLine, finalize, buildSummary, isLight, endingZh, saveState, loadState, clearState, saveArchive, loadArchive, galleryState };
+  __M['engine.js'] = { xmur3, mulberry32, nextRng, roll, chance, pickWeighted, genSeed, fmtMoney, fmtInt, fmtAvg, percentileOf, clamp, teamById, leagueById, countryById, ROLE_KEYS, roleName, roleFactor, tournamentSchedule, newGame, marketValueOf, salaryOf, makeContract, renewContract, contractTierZh, upgradeAttr, recalcOverall, beginSeason, setNbaPool, nbaPoolTeam, simNextGames, requestTrade, seasonOffseason, starRetirements, beginPlayoffs, simPlayoffGames, getMyRoster, finishSeason, generateLeagueAwards, nbaJumpInfo, tryNBAJump, step, decide, makeGameContext, applyGameResult, maxOverall, peakSeason, teamById2, clubsOf, trophyCounts, trophyZh, awardZh, tournamentZh, resultZh, computeTitles, nationalLine, finalize, buildSummary, isLight, endingZh, saveState, loadState, clearState, saveArchive, loadArchive, galleryState };
   })();
 
   // ===== ui.js (deps: data.js,build.js,simEngine.js,engine.js) =====
@@ -4739,6 +5058,7 @@ const app = {
   shareDataUrl: null,
   invite: '',
   seasonSummary: null,
+  offseason: null,
   // 建球员
   build: null,
   // 单场模拟
@@ -5049,6 +5369,16 @@ function seasonHTML(s) {
         <div class="season-record"><span class="w">${season.wins}胜</span><span class="l">${season.losses}负</span></div>
       </div>
 
+      ${(s.pendingTrades || []).length ? `
+      <div class="label" style="margin-top:12px">📢 联盟交易</div>
+      <div class="trade-list">
+        ${s.pendingTrades.slice(-3).map(t => `
+          <div class="trade-item ${t.notable ? 'notable' : ''}">
+            <span class="ti-text">${esc(t.teamA)} ↔ ${esc(t.teamB)}</span>
+            <span class="ti-detail">${esc(t.fromAToB)}（${t.ovrA}）↔ ${esc(t.fromBToA)}（${t.ovrB}）${t.notable ? ' · 重磅' : ''}</span>
+          </div>`).join('')}
+      </div>` : ''}
+
       <div class="label" style="margin-top:12px">我的场均</div>
       <div class="season-avg">
         <div><div class="num">${myAvg.pts}</div><div class="lab">得分</div></div>
@@ -5068,6 +5398,7 @@ function seasonHTML(s) {
         <button class="btn btn-primary" onclick="BL.simGames(1)">▶ 模拟 1 场</button>
         <button class="btn btn-primary" onclick="BL.simGames(5)">⏩ 模拟 5 场</button>
         <button class="btn btn-outline" onclick="BL.simAll()">快进整个赛季</button>
+        ${season.kind === 'pro' ? `<button class="btn btn-outline" onclick="BL.requestTrade()">🔄 申请交易</button>` : ''}
       </div>
       <div style="height:24px"></div>
     </div>
@@ -6198,6 +6529,7 @@ function render() {
   else if (app.view === 'archive-detail') root.innerHTML = archiveDetailHTML();
   else if (app.view === 'gallery') root.innerHTML = galleryHTML();
   else if (app.view === 'upgrade') root.innerHTML = upgradeHTML();
+  else if (app.view === 'offseason') root.innerHTML = offseasonHTML();
   if (app.view === prevView) {
     requestAnimationFrame(() => {
       const el = document.querySelector('.app > .scroll');
@@ -6503,7 +6835,28 @@ window.BL = {
     render();
   },
   dismissSeasonSummary() {
+    // 赛季总结关闭后：若在职业联赛且 NBA，展示赛季后交易/自由市场 + 明星退役
+    if (app.state && app.state.currentTeamId && !app.state.season) {
+      const team = TEAMS[app.state.currentTeamId];
+      if (team && team.league === 'nba') {
+        const trades = E.seasonOffseason(app.state);
+        const retirements = E.starRetirements(app.state);
+        app.offseason = { trades: trades ? trades.trades : [], retirements };
+        if (app.offseason.trades.length || app.offseason.retirements.length) {
+          app.view = 'offseason';
+          app.seasonSummary = null;
+          E.saveState(app.state);
+          render();
+          return;
+        }
+      }
+    }
     app.seasonSummary = null;
+    render();
+  },
+  dismissOffseason() {
+    app.offseason = null;
+    app.view = 'career';
     render();
   },
   tryNBAJump() {
@@ -6538,7 +6891,6 @@ window.BL = {
     app.modal = { type: 'mate', html: mateDetailHTML(mate) };
     render();
   },
-  // ---------- 属性升级 ----------
   openUpgrade() {
     app.view = 'upgrade';
     render();
@@ -6615,6 +6967,18 @@ window.BL = {
     if (app.state.playoffs && app.state.playoffs.done) {
       BL.finishPlayoffs();
       return;
+    }
+    E.saveState(app.state);
+    render();
+  },
+  requestTrade() {
+    if (!app.state) return;
+    const res = E.requestTrade(app.state);
+    if (!res.ok) {
+      if (res.reason === 'chance') toast(`交易未能达成（成功率约 ${res.pct}%）`);
+      else toast(res.reason);
+    } else {
+      toast(`🔄 交易成功！你被送往 ${res.team.zh}`);
     }
     E.saveState(app.state);
     render();
@@ -6726,6 +7090,55 @@ window.BL = {
   },
   backArchive() { app.view = 'archive'; render(); },
 };
+
+// ---------- 休赛期（赛季后交易 + 明星退役） ----------
+function offseasonHTML() {
+  const o = app.offseason;
+  if (!o) { app.view = 'career'; render(); return ''; }
+  const s = app.state;
+  const team = s.currentTeamId ? TEAMS[s.currentTeamId] : null;
+  const tradesHTML = (o.trades || []).map(t => `
+    <div class="trade-item notable">
+      <span class="ti-text">${esc(t.teamA)} ↔ ${esc(t.teamB)}</span>
+      <span class="ti-detail">${esc(t.fromAToB)}（${t.ovrA}）↔ ${esc(t.fromBToA)}（${t.ovrB}）</span>
+    </div>`).join('') || '<div class="empty">休赛期暂无重磅交易</div>';
+  const retHTML = (o.retirements || []).map(r => `
+    <div class="retire-item">
+      <span class="ri-name">${esc(r.name)}</span>
+      <span class="ri-ovr">OVR ${r.ovr}</span>
+      <span class="ri-text">宣布退役，告别赛场</span>
+    </div>`).join('') || '<div class="empty">没有明星退役</div>';
+  return shell(`
+    <div class="page-head">
+      <h2>🏖️ 休赛期</h2>
+    </div>
+    <div class="scroll">
+      <div class="offseason-hero">
+        <div class="oh-team">${team ? esc(team.zh) : ''}</div>
+        <div class="oh-sub">赛季结束 · 交易窗口与退役公告</div>
+      </div>
+      <div class="label" style="margin-top:14px">📢 休赛期交易</div>
+      <div class="trade-list">${tradesHTML}</div>
+      <div class="label" style="margin-top:14px">👋 明星退役</div>
+      <div class="retire-list">${retHTML}</div>
+      ${(o.rookies || []).length ? `
+      <div class="label" style="margin-top:14px">🎓 选秀新秀</div>
+      <div class="rookie-list">
+        ${o.rookies.map(r => `
+          <div class="rookie-item ${r.isStar ? 'star' : ''}">
+            <span class="rk-pick">#${r.pick}</span>
+            <span class="rk-name">${esc(r.name)}</span>
+            <span class="rk-pos">${r.pos}</span>
+            <span class="rk-ovr num">${r.ovr}</span>
+            ${r.isStar ? '<span class="rk-star">🌟 天才</span>' : ''}
+          </div>`).join('')}
+      </div>` : ''}
+      <div style="height:14px"></div>
+      <button class="btn btn-primary btn-lg btn-block" onclick="BL.dismissOffseason()">进入新赛季 →</button>
+      <div style="height:24px"></div>
+    </div>
+  `);
+}
 
 function fallbackCopy(text) {
   const ta = document.createElement('textarea');

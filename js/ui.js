@@ -28,6 +28,7 @@ const app = {
   shareDataUrl: null,
   invite: '',
   seasonSummary: null,
+  offseason: null,
   // 建球员
   build: null,
   // 单场模拟
@@ -338,6 +339,16 @@ function seasonHTML(s) {
         <div class="season-record"><span class="w">${season.wins}胜</span><span class="l">${season.losses}负</span></div>
       </div>
 
+      ${(s.pendingTrades || []).length ? `
+      <div class="label" style="margin-top:12px">📢 联盟交易</div>
+      <div class="trade-list">
+        ${s.pendingTrades.slice(-3).map(t => `
+          <div class="trade-item ${t.notable ? 'notable' : ''}">
+            <span class="ti-text">${esc(t.teamA)} ↔ ${esc(t.teamB)}</span>
+            <span class="ti-detail">${esc(t.fromAToB)}（${t.ovrA}）↔ ${esc(t.fromBToA)}（${t.ovrB}）${t.notable ? ' · 重磅' : ''}</span>
+          </div>`).join('')}
+      </div>` : ''}
+
       <div class="label" style="margin-top:12px">我的场均</div>
       <div class="season-avg">
         <div><div class="num">${myAvg.pts}</div><div class="lab">得分</div></div>
@@ -357,6 +368,7 @@ function seasonHTML(s) {
         <button class="btn btn-primary" onclick="BL.simGames(1)">▶ 模拟 1 场</button>
         <button class="btn btn-primary" onclick="BL.simGames(5)">⏩ 模拟 5 场</button>
         <button class="btn btn-outline" onclick="BL.simAll()">快进整个赛季</button>
+        ${season.kind === 'pro' ? `<button class="btn btn-outline" onclick="BL.requestTrade()">🔄 申请交易</button>` : ''}
       </div>
       <div style="height:24px"></div>
     </div>
@@ -1487,6 +1499,7 @@ function render() {
   else if (app.view === 'archive-detail') root.innerHTML = archiveDetailHTML();
   else if (app.view === 'gallery') root.innerHTML = galleryHTML();
   else if (app.view === 'upgrade') root.innerHTML = upgradeHTML();
+  else if (app.view === 'offseason') root.innerHTML = offseasonHTML();
   if (app.view === prevView) {
     requestAnimationFrame(() => {
       const el = document.querySelector('.app > .scroll');
@@ -1792,7 +1805,28 @@ window.BL = {
     render();
   },
   dismissSeasonSummary() {
+    // 赛季总结关闭后：若在职业联赛且 NBA，展示赛季后交易/自由市场 + 明星退役
+    if (app.state && app.state.currentTeamId && !app.state.season) {
+      const team = TEAMS[app.state.currentTeamId];
+      if (team && team.league === 'nba') {
+        const trades = E.seasonOffseason(app.state);
+        const retirements = E.starRetirements(app.state);
+        app.offseason = { trades: trades ? trades.trades : [], retirements };
+        if (app.offseason.trades.length || app.offseason.retirements.length) {
+          app.view = 'offseason';
+          app.seasonSummary = null;
+          E.saveState(app.state);
+          render();
+          return;
+        }
+      }
+    }
     app.seasonSummary = null;
+    render();
+  },
+  dismissOffseason() {
+    app.offseason = null;
+    app.view = 'career';
     render();
   },
   tryNBAJump() {
@@ -1827,7 +1861,6 @@ window.BL = {
     app.modal = { type: 'mate', html: mateDetailHTML(mate) };
     render();
   },
-  // ---------- 属性升级 ----------
   openUpgrade() {
     app.view = 'upgrade';
     render();
@@ -1904,6 +1937,18 @@ window.BL = {
     if (app.state.playoffs && app.state.playoffs.done) {
       BL.finishPlayoffs();
       return;
+    }
+    E.saveState(app.state);
+    render();
+  },
+  requestTrade() {
+    if (!app.state) return;
+    const res = E.requestTrade(app.state);
+    if (!res.ok) {
+      if (res.reason === 'chance') toast(`交易未能达成（成功率约 ${res.pct}%）`);
+      else toast(res.reason);
+    } else {
+      toast(`🔄 交易成功！你被送往 ${res.team.zh}`);
     }
     E.saveState(app.state);
     render();
@@ -2015,6 +2060,55 @@ window.BL = {
   },
   backArchive() { app.view = 'archive'; render(); },
 };
+
+// ---------- 休赛期（赛季后交易 + 明星退役） ----------
+function offseasonHTML() {
+  const o = app.offseason;
+  if (!o) { app.view = 'career'; render(); return ''; }
+  const s = app.state;
+  const team = s.currentTeamId ? TEAMS[s.currentTeamId] : null;
+  const tradesHTML = (o.trades || []).map(t => `
+    <div class="trade-item notable">
+      <span class="ti-text">${esc(t.teamA)} ↔ ${esc(t.teamB)}</span>
+      <span class="ti-detail">${esc(t.fromAToB)}（${t.ovrA}）↔ ${esc(t.fromBToA)}（${t.ovrB}）</span>
+    </div>`).join('') || '<div class="empty">休赛期暂无重磅交易</div>';
+  const retHTML = (o.retirements || []).map(r => `
+    <div class="retire-item">
+      <span class="ri-name">${esc(r.name)}</span>
+      <span class="ri-ovr">OVR ${r.ovr}</span>
+      <span class="ri-text">宣布退役，告别赛场</span>
+    </div>`).join('') || '<div class="empty">没有明星退役</div>';
+  return shell(`
+    <div class="page-head">
+      <h2>🏖️ 休赛期</h2>
+    </div>
+    <div class="scroll">
+      <div class="offseason-hero">
+        <div class="oh-team">${team ? esc(team.zh) : ''}</div>
+        <div class="oh-sub">赛季结束 · 交易窗口与退役公告</div>
+      </div>
+      <div class="label" style="margin-top:14px">📢 休赛期交易</div>
+      <div class="trade-list">${tradesHTML}</div>
+      <div class="label" style="margin-top:14px">👋 明星退役</div>
+      <div class="retire-list">${retHTML}</div>
+      ${(o.rookies || []).length ? `
+      <div class="label" style="margin-top:14px">🎓 选秀新秀</div>
+      <div class="rookie-list">
+        ${o.rookies.map(r => `
+          <div class="rookie-item ${r.isStar ? 'star' : ''}">
+            <span class="rk-pick">#${r.pick}</span>
+            <span class="rk-name">${esc(r.name)}</span>
+            <span class="rk-pos">${r.pos}</span>
+            <span class="rk-ovr num">${r.ovr}</span>
+            ${r.isStar ? '<span class="rk-star">🌟 天才</span>' : ''}
+          </div>`).join('')}
+      </div>` : ''}
+      <div style="height:14px"></div>
+      <button class="btn btn-primary btn-lg btn-block" onclick="BL.dismissOffseason()">进入新赛季 →</button>
+      <div style="height:24px"></div>
+    </div>
+  `);
+}
 
 function fallbackCopy(text) {
   const ta = document.createElement('textarea');
