@@ -1247,6 +1247,18 @@ function mulberry32(a) {
   };
 }
 
+// 把任意 seed（数字或字符串）稳定转成 32 位整数，避免字符串被 mulberry32 转成 0 导致比赛结果雷同
+function hashSeed(seed) {
+  if (typeof seed === 'number') return seed | 0;
+  const s = String(seed);
+  let h = 1779033703;
+  for (let i = 0; i < s.length; i++) {
+    h = Math.imul(h ^ s.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
+  }
+  return h | 0;
+}
+
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const pick = (rng, arr) => arr[Math.floor(rng() * arr.length)];
 
@@ -1337,7 +1349,7 @@ function mainPos(posStr) {
 // opts: { isPlayoff, seed, myPlayerIndex, label }
 // myPlayer 会强制加入主队首发并作为核心
 function simulateGame(homeTeam, awayTeam, homeRoster, awayRoster, opts = {}) {
-  const seed = opts.seed || (Math.random() * 1e9) >>> 0;
+  const seed = hashSeed(opts.seed !== undefined ? opts.seed : (Math.random() * 1e9) >>> 0);
   const rng = mulberry32(seed);
   const isPlayoff = !!opts.isPlayoff;
   const home = { team: homeTeam, roster: homeRoster.map(p => ({ ...p, box: emptyBox() })) };
@@ -1782,7 +1794,7 @@ function boxScoreOf(side) {
     })),
   };
 }
-  __M['simEngine.js'] = { POS_EN_ZH, mulberry32, makeRoster, virtualPlayer, mainPos, simulateGame };
+  __M['simEngine.js'] = { POS_EN_ZH, mulberry32, hashSeed, makeRoster, virtualPlayer, mainPos, simulateGame };
   })();
 
   // ===== engine.js (deps: data.js) =====
@@ -5438,7 +5450,8 @@ function endingZh(reason) {
 // ---------- 存档 ----------
 function saveState(state) {
   try {
-    localStorage.setItem(`bl-save:${state.seed}`, JSON.stringify(state));
+    const saved = state ? { ...state, savedAt: Date.now() } : state;
+    localStorage.setItem(`bl-save:${state.seed}`, JSON.stringify(saved));
   } catch (e) { /* ignore */ }
 }
 
@@ -5447,6 +5460,30 @@ function loadState(seed) {
     const raw = localStorage.getItem(`bl-save:${seed}`);
     return raw ? JSON.parse(raw) : null;
   } catch (e) { return null; }
+}
+
+function listSaves() {
+  try {
+    const list = [];
+    for (const k of Object.keys(localStorage)) {
+      if (!k.startsWith('bl-save:')) continue;
+      const seed = k.slice(8);
+      let st = null;
+      try { st = JSON.parse(localStorage.getItem(k)); } catch (e) { continue; }
+      if (!st) continue;
+      list.push({
+        seed,
+        name: (st.player && st.player.name) || '未命名',
+        age: (st.player && st.player.age) || 0,
+        overall: (st.player && st.player.overall) || 0,
+        teamId: st.currentTeamId || null,
+        stage: st.stage || st.phase || '',
+        season: st.season ? `${st.season.played}/${st.season.totalGames}` : '',
+        savedAt: st.savedAt || 0,
+      });
+    }
+    return list.sort((a, b) => b.savedAt - a.savedAt);
+  } catch (e) { return []; }
 }
 
 function clearState(seed) {
@@ -5483,7 +5520,7 @@ function galleryState() {
   }
   return { unlocked, total: TITLES.length };
 }
-  __M['engine.js'] = { xmur3, mulberry32, nextRng, roll, chance, pickWeighted, genSeed, fmtMoney, fmtInt, fmtAvg, percentileOf, clamp, teamById, leagueById, countryById, ROLE_KEYS, roleName, roleFactor, tournamentSchedule, newGame, marketValueOf, salaryOf, makeContract, renewContract, contractTierZh, upgradeAttr, recalcOverall, beginSeason, setNbaPool, nbaPoolTeam, simNextGames, applyRegularGameResult, nextOpponent, requestTrade, seasonOffseason, starRetirements, generateStandings, beginPlayoffs, simPlayoffGames, applyPlayoffGameResult, isPlayoffKeyGame, getMyRoster, finishSeason, generateLeagueAwards, nbaJumpInfo, tryNBAJump, step, decide, makeGameContext, applyGameResult, maxOverall, peakSeason, teamById2, clubsOf, trophyCounts, trophyZh, awardZh, tournamentZh, resultZh, computeTitles, nationalLine, finalize, buildSummary, isLight, endingZh, saveState, loadState, clearState, saveArchive, loadArchive, galleryState };
+  __M['engine.js'] = { xmur3, mulberry32, nextRng, roll, chance, pickWeighted, genSeed, fmtMoney, fmtInt, fmtAvg, percentileOf, clamp, teamById, leagueById, countryById, ROLE_KEYS, roleName, roleFactor, tournamentSchedule, newGame, marketValueOf, salaryOf, makeContract, renewContract, contractTierZh, upgradeAttr, recalcOverall, beginSeason, setNbaPool, nbaPoolTeam, simNextGames, applyRegularGameResult, nextOpponent, requestTrade, seasonOffseason, starRetirements, generateStandings, beginPlayoffs, simPlayoffGames, applyPlayoffGameResult, isPlayoffKeyGame, getMyRoster, finishSeason, generateLeagueAwards, nbaJumpInfo, tryNBAJump, step, decide, makeGameContext, applyGameResult, maxOverall, peakSeason, teamById2, clubsOf, trophyCounts, trophyZh, awardZh, tournamentZh, resultZh, computeTitles, nationalLine, finalize, buildSummary, isLight, endingZh, saveState, loadState, listSaves, clearState, saveArchive, loadArchive, galleryState };
   })();
 
   // ===== ui.js (deps: data.js,build.js,simEngine.js,engine.js) =====
@@ -5626,13 +5663,27 @@ function topbarHTML() {
 // ---------- 首页 ----------
 function homeHTML() {
   const archive = E.loadArchive();
-  const resume = (app.seed && E.loadState(app.seed)) || latestSave()?.state;
+  const saves = E.listSaves();
   const modeCards = Object.entries(MODES).map(([key, m]) => `
     <button class="mode-card ${app.mode === key ? 'active' : ''}" onclick="BL.setMode('${key}')">
       ${m.recommended ? '<span class="rec">推荐</span>' : ''}
       <div class="name">${m.label}</div>
       <div class="hint">${m.hint}</div>
     </button>`).join('');
+  const saveRows = saves.map(s => {
+    const team = (s.teamId && TEAMS[s.teamId]) ? TEAMS[s.teamId].zh : '';
+    const stageZh = s.stage === 'pro' ? '职业' : s.stage === 'youth' ? '青训' : s.stage === 'ncaa' ? 'NCAA' : s.stage === 'summary' ? '已退役' : (s.stage || '');
+    const when = s.savedAt ? new Date(s.savedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+    const prog = s.season ? `赛季 ${s.season} 场` : '';
+    return `
+      <div class="save-row">
+        <button class="save-main" onclick="BL.resume('${s.seed}')">
+          <span class="sv-name">${esc(s.name)} <small>${s.overall} 能力 · ${s.age}岁</small></span>
+          <span class="sv-meta">${team ? esc(team) + ' · ' : ''}${stageZh}${prog ? ' · ' + prog : ''}${when ? ' · ' + when : ''}</span>
+        </button>
+        <button class="sv-del" title="删除存档" onclick="BL.deleteSave('${s.seed}')">✕</button>
+      </div>`;
+  }).join('');
   return shell(`
     <div class="scroll">
       <div class="home-hero">
@@ -5646,8 +5697,12 @@ function homeHTML() {
 
       <div class="home-actions">
         <button class="btn btn-primary btn-lg btn-block" onclick="BL.start()">开始生涯</button>
-        ${resume ? `<button class="btn btn-outline btn-block" onclick="BL.resume()">继续上一局</button>` : ''}
       </div>
+
+      ${saves.length ? `
+        <div class="label" style="margin-top:14px">📁 本地存档 <small>（自动保存）</small></div>
+        <div class="save-list">${saveRows}</div>
+      ` : ''}
 
       <div class="home-sub">
         <button class="btn" onclick="BL.openArchive()">历史档案${archive.length ? ` · ${archive.length}` : ''}</button>
@@ -5666,17 +5721,6 @@ function homeHTML() {
     </div>
     ${app.modal ? modalHTML() : ''}
   `);
-}
-
-function latestSave() {
-  try {
-    const keys = Object.keys(localStorage).filter(k => k.startsWith('bl-save:'));
-    if (!keys.length) return null;
-    const key = keys.sort().pop();
-    return { seed: key.slice(8), state: JSON.parse(localStorage.getItem(key)) };
-  } catch (e) {
-    return null;
-  }
 }
 
 // ---------- 建档 ----------
@@ -7119,11 +7163,12 @@ window.BL = {
     app.view = 'identity';
     render();
   },
-  resume() {
+  resume(seed) {
+    if (seed) app.seed = seed;
     if (!app.seed) {
       // 找最近一次的存档
-      const key = Object.keys(localStorage).filter(k => k.startsWith('bl-save:')).sort().pop();
-      if (key) app.seed = key.slice(8);
+      const saves = E.listSaves();
+      if (saves.length) app.seed = saves[0].seed;
     }
     if (!app.seed) { toast('没有可继续的存档'); return; }
     const st = E.loadState(app.seed);
@@ -7157,6 +7202,12 @@ window.BL = {
     render();
   },
   backHome() { app.view = 'home'; app.modal = null; render(); },
+  deleteSave(seed) {
+    if (!seed) return;
+    E.clearState(seed);
+    toast('已删除存档');
+    render();
+  },
   openArchive() { app.view = 'archive'; render(); },
   openGallery() { app.view = 'gallery'; render(); },
   openUpdates() { app.modal = { type: 'updates' }; render(); },
@@ -7530,11 +7581,14 @@ window.BL = {
         app.view = 'offseason';
         app.seasonSummary = null;
         E.saveState(app.state);
+        toast('📁 本赛季进度已保存');
         render();
         return;
       }
     }
     app.seasonSummary = null;
+    E.saveState(app.state);
+    toast('📁 本赛季进度已保存');
     render();
   },
   dismissOffseason() {

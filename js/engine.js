@@ -3651,7 +3651,8 @@ export function endingZh(reason) {
 // ---------- 存档 ----------
 export function saveState(state) {
   try {
-    localStorage.setItem(`bl-save:${state.seed}`, JSON.stringify(state));
+    const saved = state ? { ...state, savedAt: Date.now() } : state;
+    localStorage.setItem(`bl-save:${state.seed}`, JSON.stringify(saved));
   } catch (e) { /* ignore */ }
 }
 
@@ -3660,6 +3661,30 @@ export function loadState(seed) {
     const raw = localStorage.getItem(`bl-save:${seed}`);
     return raw ? JSON.parse(raw) : null;
   } catch (e) { return null; }
+}
+
+export function listSaves() {
+  try {
+    const list = [];
+    for (const k of Object.keys(localStorage)) {
+      if (!k.startsWith('bl-save:')) continue;
+      const seed = k.slice(8);
+      let st = null;
+      try { st = JSON.parse(localStorage.getItem(k)); } catch (e) { continue; }
+      if (!st) continue;
+      list.push({
+        seed,
+        name: (st.player && st.player.name) || '未命名',
+        age: (st.player && st.player.age) || 0,
+        overall: (st.player && st.player.overall) || 0,
+        teamId: st.currentTeamId || null,
+        stage: st.stage || st.phase || '',
+        season: st.season ? `${st.season.played}/${st.season.totalGames}` : '',
+        savedAt: st.savedAt || 0,
+      });
+    }
+    return list.sort((a, b) => b.savedAt - a.savedAt);
+  } catch (e) { return []; }
 }
 
 export function clearState(seed) {

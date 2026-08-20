@@ -14,6 +14,18 @@ export function mulberry32(a) {
   };
 }
 
+// 把任意 seed（数字或字符串）稳定转成 32 位整数，避免字符串被 mulberry32 转成 0 导致比赛结果雷同
+export function hashSeed(seed) {
+  if (typeof seed === 'number') return seed | 0;
+  const s = String(seed);
+  let h = 1779033703;
+  for (let i = 0; i < s.length; i++) {
+    h = Math.imul(h ^ s.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
+  }
+  return h | 0;
+}
+
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const pick = (rng, arr) => arr[Math.floor(rng() * arr.length)];
 
@@ -104,7 +116,7 @@ export function mainPos(posStr) {
 // opts: { isPlayoff, seed, myPlayerIndex, label }
 // myPlayer 会强制加入主队首发并作为核心
 export function simulateGame(homeTeam, awayTeam, homeRoster, awayRoster, opts = {}) {
-  const seed = opts.seed || (Math.random() * 1e9) >>> 0;
+  const seed = hashSeed(opts.seed !== undefined ? opts.seed : (Math.random() * 1e9) >>> 0);
   const rng = mulberry32(seed);
   const isPlayoff = !!opts.isPlayoff;
   const home = { team: homeTeam, roster: homeRoster.map(p => ({ ...p, box: emptyBox() })) };

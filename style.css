@@ -186,6 +186,41 @@ input, select { font-family: inherit; }
 }
 
 .home-actions { margin-top: 20px; display: flex; flex-direction: column; gap: 10px; }
+.save-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.save-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.save-main {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.save-main:active { background: var(--panel-3); }
+.sv-name { display: block; font-size: 14px; font-weight: 800; color: var(--text); }
+.sv-name small { font-weight: 600; color: var(--text-2); }
+.sv-meta { display: block; font-size: 11px; color: #71717a; margin-top: 3px; }
+.sv-del {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  background: none;
+  border: none;
+  border-left: 1px solid var(--line);
+  color: #71717a;
+  font-size: 14px;
+  cursor: pointer;
+}
+.sv-del:hover { color: #ef4444; background: var(--panel-3); }
 .home-sub { margin-top: 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .home-sub .btn { background: var(--panel); border-color: var(--line); color: var(--text-2); font-size: 13px; }
 .home-sub .btn:hover { border-color: #3f3f46; color: var(--text); }

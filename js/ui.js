@@ -134,13 +134,27 @@ function topbarHTML() {
 // ---------- 首页 ----------
 function homeHTML() {
   const archive = E.loadArchive();
-  const resume = (app.seed && E.loadState(app.seed)) || latestSave()?.state;
+  const saves = E.listSaves();
   const modeCards = Object.entries(MODES).map(([key, m]) => `
     <button class="mode-card ${app.mode === key ? 'active' : ''}" onclick="BL.setMode('${key}')">
       ${m.recommended ? '<span class="rec">推荐</span>' : ''}
       <div class="name">${m.label}</div>
       <div class="hint">${m.hint}</div>
     </button>`).join('');
+  const saveRows = saves.map(s => {
+    const team = (s.teamId && TEAMS[s.teamId]) ? TEAMS[s.teamId].zh : '';
+    const stageZh = s.stage === 'pro' ? '职业' : s.stage === 'youth' ? '青训' : s.stage === 'ncaa' ? 'NCAA' : s.stage === 'summary' ? '已退役' : (s.stage || '');
+    const when = s.savedAt ? new Date(s.savedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+    const prog = s.season ? `赛季 ${s.season} 场` : '';
+    return `
+      <div class="save-row">
+        <button class="save-main" onclick="BL.resume('${s.seed}')">
+          <span class="sv-name">${esc(s.name)} <small>${s.overall} 能力 · ${s.age}岁</small></span>
+          <span class="sv-meta">${team ? esc(team) + ' · ' : ''}${stageZh}${prog ? ' · ' + prog : ''}${when ? ' · ' + when : ''}</span>
+        </button>
+        <button class="sv-del" title="删除存档" onclick="BL.deleteSave('${s.seed}')">✕</button>
+      </div>`;
+  }).join('');
   return shell(`
     <div class="scroll">
       <div class="home-hero">
@@ -154,8 +168,12 @@ function homeHTML() {
 
       <div class="home-actions">
         <button class="btn btn-primary btn-lg btn-block" onclick="BL.start()">开始生涯</button>
-        ${resume ? `<button class="btn btn-outline btn-block" onclick="BL.resume()">继续上一局</button>` : ''}
       </div>
+
+      ${saves.length ? `
+        <div class="label" style="margin-top:14px">📁 本地存档 <small>（自动保存）</small></div>
+        <div class="save-list">${saveRows}</div>
+      ` : ''}
 
       <div class="home-sub">
         <button class="btn" onclick="BL.openArchive()">历史档案${archive.length ? ` · ${archive.length}` : ''}</button>
@@ -174,17 +192,6 @@ function homeHTML() {
     </div>
     ${app.modal ? modalHTML() : ''}
   `);
-}
-
-function latestSave() {
-  try {
-    const keys = Object.keys(localStorage).filter(k => k.startsWith('bl-save:'));
-    if (!keys.length) return null;
-    const key = keys.sort().pop();
-    return { seed: key.slice(8), state: JSON.parse(localStorage.getItem(key)) };
-  } catch (e) {
-    return null;
-  }
 }
 
 // ---------- 建档 ----------
@@ -1627,11 +1634,12 @@ window.BL = {
     app.view = 'identity';
     render();
   },
-  resume() {
+  resume(seed) {
+    if (seed) app.seed = seed;
     if (!app.seed) {
       // 找最近一次的存档
-      const key = Object.keys(localStorage).filter(k => k.startsWith('bl-save:')).sort().pop();
-      if (key) app.seed = key.slice(8);
+      const saves = E.listSaves();
+      if (saves.length) app.seed = saves[0].seed;
     }
     if (!app.seed) { toast('没有可继续的存档'); return; }
     const st = E.loadState(app.seed);
@@ -1665,6 +1673,12 @@ window.BL = {
     render();
   },
   backHome() { app.view = 'home'; app.modal = null; render(); },
+  deleteSave(seed) {
+    if (!seed) return;
+    E.clearState(seed);
+    toast('已删除存档');
+    render();
+  },
   openArchive() { app.view = 'archive'; render(); },
   openGallery() { app.view = 'gallery'; render(); },
   openUpdates() { app.modal = { type: 'updates' }; render(); },
@@ -2038,11 +2052,14 @@ window.BL = {
         app.view = 'offseason';
         app.seasonSummary = null;
         E.saveState(app.state);
+        toast('📁 本赛季进度已保存');
         render();
         return;
       }
     }
     app.seasonSummary = null;
+    E.saveState(app.state);
+    toast('📁 本赛季进度已保存');
     render();
   },
   dismissOffseason() {
