@@ -1079,6 +1079,7 @@ function makeSeasonRosters(state, team, schedule, kind) {
   // 把上一休赛期生成的新秀注入各队 roster（NBA 联赛，每队最多 1 个新秀）
   if (kind === 'pro' && state.rookiePool && state.rookiePool.length) {
     const pool = state.rookiePool.slice();
+    state.seasonRookies = [];
     for (const [tid, roster] of teams) {
       if (!pool.length) break;
       if (roster.length >= 12) continue;
@@ -1094,10 +1095,13 @@ function makeSeasonRosters(state, team, schedule, kind) {
           attrs: rookie.attrs || attrsForOvr(rookie.ovr, rookie.pos),
           g: 0, pts: 0, reb: 0, ast: 0, stl: 0, blk: 0,
         });
+        state.seasonRookies.push({ name: rookie.name, pos: rookie.pos, ovr: rookie.ovr });
       }
     }
     // 已注入的从池中移除（避免每赛季重复）
     state.rookiePool = [];
+  } else {
+    state.seasonRookies = [];
   }
   return teams;
 }
@@ -2244,22 +2248,50 @@ export function generateLeagueAwards(state, resultOverride) {
   const dpoy = candidates.slice().sort((a, b) => (b.avg.stl + b.avg.blk) - (a.avg.stl + a.avg.blk))[0];
   awards.push({ key: 'dpoy', zh: '最佳防守球员', winner: makeLine(dpoy) });
 
-  // 最佳新秀（生涯第一季的我，或其他低龄球员）
+  // 最佳新秀（生涯第一季的我，或当年新秀池中表现最好者）
   // 注意：结算时当前赛季尚未 push 进 seasons，故 +1 计入当前
   const proCount = (state.seasons || []).filter(s => !s.youth && s.teamId).length + 1;
   const isRookie = proCount <= 1;
   if (isRookie) {
     awards.push({ key: 'roty', zh: '最佳新秀', winner: makeLine(me) });
   } else {
-    const rookiePool = candidates.filter(p => !p.isMe);
-    awards.push({ key: 'roty', zh: '最佳新秀', winner: makeLine(pickBest(rookiePool, p => p.ovr)) });
+    // 从当年新秀池（seasonRookies）中选表现最好者
+    const seasonRookies = state.seasonRookies || [];
+    let rookieWinner = null;
+    if (seasonRookies.length) {
+      // 新秀数据：从 roster 中找该新秀的场均表现
+      const rosterMap = new Map();
+      season.rosters.forEach((roster, tid) => roster.forEach(p => rosterMap.set(p.name, { avg: p.g > 0 ? {
+        pts: p.pts / p.g, reb: p.reb / p.g, ast: p.ast / p.g, stl: p.stl / p.g, blk: p.blk / p.g,
+      } : { pts: 0, reb: 0, ast: 0, stl: 0, blk: 0 }, ovr: p.ovr, g: p.g })));
+      let best = null, bestScore = -1;
+      for (const rk of seasonRookies) {
+        const info = rosterMap.get(rk.name);
+        if (!info || info.g < 20) continue;
+        const score = info.avg.pts + info.avg.reb * 0.6 + info.avg.ast * 0.6;
+        if (score > bestScore) { bestScore = score; best = { ...info, name: rk.name, pos: rk.pos }; }
+      }
+      if (best) rookieWinner = best;
+    }
+    if (!rookieWinner) {
+      // 兜底：从候选里找一个低龄球员（用新秀标记）
+      const rookieCand = candidates.filter(p => !p.isMe && p.g >= 20);
+      rookieWinner = pickBest(rookieCand.length ? rookieCand : candidates.filter(p => !p.isMe), p => p.avg.pts);
+    }
+    awards.push({ key: 'roty', zh: '最佳新秀', winner: makeLine(rookieWinner) });
   }
 
   // 最佳第六人 / 进步最快 / FMVP（赛季结果相关）
   const champion = (resultOverride ? resultOverride.league === 'champion'
     : state.lastSeasonSummary && state.lastSeasonSummary.result && state.lastSeasonSummary.result.league === 'champion');
   if (season.kind === 'pro' && champion) {
-    const fmvp = pickBest([...candidates].filter(p => p.isMe || p.ovr >= 85), p => p.avg.pts);
+    // FMVP：优先看玩家（玩家是冠军核心则给玩家），否则给候选中场均最高者
+    let fmvp;
+    if (me.avg.pts >= 20) fmvp = me;
+    else {
+      const fmvpCand = candidates.filter(p => !p.isMe && p.ovr >= 80);
+      fmvp = pickBest(fmvpCand.length ? fmvpCand : candidates, p => p.avg.pts);
+    }
     awards.push({ key: 'fmvp', zh: '总决赛MVP', winner: makeLine(fmvp) });
   }
 
@@ -2714,6 +2746,7 @@ function resolveContractExpiry(state, optionId, offerTeamId) {
     };
   }
   state.step += 1;
+  state.currentEvent = null;
   return { state, screen: 'career' };
 }
 
