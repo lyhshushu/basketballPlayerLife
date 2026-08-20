@@ -2032,6 +2032,8 @@ function newGame({ seed, mode, name, nationality, position, hand, number, domest
     lastVoluntaryOfferAge: 0,
     usedTransferOfferAges: [],
     usedUpMoveAges: [],
+    league: null,         // 持久化联盟球员：{ [teamId]: [player] }，跨赛季保留（成长/交易/新秀）
+    lastNpcGrowthLog: [], // 最近一次 NPC 成长记录（供调试/展示）
     rngState: seedHash,
   };
 }
@@ -2869,13 +2871,44 @@ function nbaPoolTeam(key) {
 }
 
 function makeSeasonRosters(state, team, schedule, kind) {
+  // 首次进入职业赛季时初始化持久化联盟球员（跨赛季保留）
+  if (kind === 'pro' && !state.league) {
+    state.league = initLeaguePlayers(state);
+    state.leagueYear = state.player.age; // 记录联盟建立年份（用于新秀年份）
+  }
   const teams = new Map();
   const table = kind === 'ncaa' ? NCAA_TEAMS : TEAMS;
-  teams.set(team.id, makeSeasonRoster(state, team, mulberry32(0x1234)));
-  for (const g of schedule) {
-    if (g.oppId && !teams.has(g.oppId)) {
-      const opp = table[g.oppId];
-      if (opp) teams.set(g.oppId, makeSeasonRoster(state, opp, mulberry32(0x5678 + g.oppId.length)));
+  if (kind === 'pro' && state.league) {
+    // 职业赛季：从持久化联盟取各队 roster（含成长/交易/新秀结果）
+    state.seasonRookies = [];
+    for (const [tid, players] of Object.entries(state.league)) {
+      const t = table[tid];
+      if (!t) continue;
+      let roster = players.slice().sort((a, b) => (b.starter ? 1 : 0) - (a.starter ? 1 : 0) || b.ovr - a.ovr).slice(0, 10);
+      const mapped = roster.map(p => ({ ...p, g: 0, pts: 0, reb: 0, ast: 0, stl: 0, blk: 0 }));
+      // 记录本季新秀（供 ROTY 评选）
+      for (const p of mapped) {
+        if (p.rookie) state.seasonRookies.push({ name: p.name, pos: p.pos, ovr: p.ovr });
+      }
+      // 我方球员插入当前队首发
+      if (state.currentTeamId === t.id && !mapped.some(p => p.isMe)) {
+        const mePos = POSITIONS[state.player.position].en;
+        mapped[0] = {
+          name: state.player.name, en: state.player.name, pos: mePos, ovr: state.player.overall,
+          starter: true, isMe: true,
+          attrs: state.player.attrs || attrsForOvr(state.player.overall, mePos),
+          g: 0, pts: 0, reb: 0, ast: 0, stl: 0, blk: 0,
+        };
+      }
+      teams.set(t.id, mapped);
+    }
+  } else {
+    teams.set(team.id, makeSeasonRoster(state, team, mulberry32(0x1234)));
+    for (const g of schedule) {
+      if (g.oppId && !teams.has(g.oppId)) {
+        const opp = table[g.oppId];
+        if (opp) teams.set(g.oppId, makeSeasonRoster(state, opp, mulberry32(0x5678 + g.oppId.length)));
+      }
     }
   }
   // 把上一休赛期生成的新秀注入各队 roster（NBA 联赛，每队最多 1 个新秀）
@@ -2906,6 +2939,135 @@ function makeSeasonRosters(state, team, schedule, kind) {
     state.seasonRookies = [];
   }
   return teams;
+}
+
+// 初始化持久化联盟球员（全职业联赛，跨赛季保留）
+function initLeaguePlayers(state) {
+  const league = {};
+  for (const t of Object.values(TEAMS)) {
+    const isNba = LEAGUES[t.league] && LEAGUES[t.league].tier === 1;
+    const players = [];
+    if (isNba && __nbaPool && __nbaPool[t.abbr.toUpperCase()] && __nbaPool[t.abbr.toUpperCase()].length >= 5) {
+      // NBA：真实球员池（含潜力推导）
+      const real = __nbaPool[t.abbr.toUpperCase()].slice().sort((a, b) => b.ovr - a.ovr).slice(0, 10);
+      real.forEach((p, i) => {
+        const ovr = p.ovr;
+        players.push({
+          name: p.cname || p.name,
+          en: p.name,
+          pos: mainPosOf(p.pos),
+          ovr,
+          starter: i < 5,
+          isMe: false,
+          nbaId: p.nbaId,
+          potential: clamp(Math.round(ovr + (p.potential != null ? p.potential - 50 : 4 + Math.random() * 9)), 60, 99),
+          age: 20 + Math.floor(Math.random() * 11), // 20-30 岁
+          attrs: {
+            threePT: p.threePT ?? ovr - 5, MID: p.MID ?? ovr - 3, FIN: p.FIN ?? ovr - 2,
+            DNK: p.DNK ?? ovr - 6, HAN: p.HAN ?? ovr - 2, PAS: p.PAS ?? ovr - 3,
+            PDEF: p.PDEF ?? ovr - 4, IDEF: p.IDEF ?? ovr - 4, BLK: p.BLK ?? ovr - 8,
+            REB: p.REB ?? ovr - 5, ATH: p.ATH ?? ovr - 3, STR: p.STR ?? ovr - 2,
+            CLU: p.CLU ?? ovr - 2,
+          },
+          rookie: false,
+        });
+      });
+    } else {
+      // 其他联赛：虚拟球员（持久化）
+      const rng = mulberry32(0x1234 + t.id.length * 131);
+      const surnames = surnamesForTeam(t);
+      const positions = ['PG', 'SG', 'SF', 'PF', 'C'];
+      const usedNames = new Set();
+      for (let i = 0; i < 9; i++) {
+        const starter = i < 5;
+        const base = t.strength + (starter ? 6 : -4);
+        const ovr = clamp(Math.round(base + rng() * 10 - 5), 55, 99);
+        let name = surnames[Math.floor(rng() * surnames.length)];
+        let counter = 0;
+        while (usedNames.has(name)) { counter++; name = surnames[Math.floor(rng() * surnames.length)] + (counter > 0 ? `·${counter}` : ''); }
+        usedNames.add(name);
+        players.push({
+          name, pos: positions[i % 5], ovr, starter,
+          isMe: false,
+          potential: clamp(Math.round(ovr + 3 + rng() * 10), 60, 99),
+          age: 20 + Math.floor(rng() * 12),
+          attrs: attrsForOvr(ovr, positions[i % 5]),
+          rookie: false,
+        });
+      }
+    }
+    league[t.id] = players;
+  }
+  return league;
+}
+
+// ---------- 联盟 NPC 成长（移植自 perfect-player 思路：年龄×潜力差决定涨跌） ----------
+// 计算单个球员一年 OVR 变化：成长期按潜力差成长，衰老期按年龄退化
+function npcYearDelta(player) {
+  const ovr = player.ovr || 70;
+  const potential = player.potential != null ? player.potential : clamp(ovr + 6, 60, 99);
+  const age = player.age || 24;
+  const potGap = potential - ovr;
+  const rnd = () => Math.random();
+  // 已达潜力天花板：按年龄老化
+  if (potGap <= 0) {
+    if (potential >= 95) { if (age >= 39) return -2 + Math.floor(rnd() * 2); if (age >= 36) return -1; if (age >= 34) return 0; return 0; }
+    if (potential >= 88) { if (age >= 37) return -2; if (age >= 34) return -1; if (age >= 31) return 0; return 0; }
+    if (potential >= 80) { if (age >= 35) return -2; if (age >= 32) return -1; if (age >= 30) return 0; return 0; }
+    if (age >= 33) return -2; if (age >= 30) return -1; return 0;
+  }
+  // 成长期
+  let delta;
+  if (age <= 26) {
+    if (potential >= 95 && potGap >= 10) delta = 2 + Math.floor(rnd() * 3); // +2..+4
+    else if (potential >= 95) delta = 2 + Math.floor(rnd() * 2);
+    else if (potential >= 88) delta = 1 + Math.floor(rnd() * 2);
+    else if (potential >= 80) delta = Math.floor(rnd() * 2);
+    else delta = rnd() < 0.5 ? 1 : 0;
+  } else if (age <= 30) {
+    delta = potential >= 90 ? 1 : (rnd() < 0.4 ? 1 : 0);
+  } else if (age <= 34) {
+    delta = potential >= 95 ? 1 : 0;
+  } else {
+    delta = -(1 + Math.floor(rnd() * 2)); // -1..-2
+  }
+  delta = Math.min(delta, potGap);
+  return clamp(delta, -4, 5);
+}
+
+// 赛季末：联盟所有 NPC 球员成长/退化一年（移植 perfect-player applyNpcSeasonDevelopment）
+function applyNpcDevelopment(state) {
+  if (!state.league) return [];
+  const log = [];
+  const rng = mulberry32(state.rngState ^ 0xbeef);
+  for (const [tid, players] of Object.entries(state.league)) {
+    const team = TEAMS[tid];
+    const keep = [];
+    for (const p of players) {
+      if (!p || p.isMe) { if (p) keep.push(p); continue; }
+      const delta = npcYearDelta(p);
+      if (delta !== 0) {
+        // 把 OVR 变化分摊到属性（成长加最弱项，衰退减最强项）
+        const attrs = p.attrs || attrsForOvr(p.ovr, p.pos);
+        const keys = ['threePT', 'MID', 'FIN', 'DNK', 'HAN', 'PAS', 'PDEF', 'IDEF', 'BLK', 'REB', 'ATH', 'STR', 'CLU'];
+        const sorted = keys.slice().sort((a, b) => attrs[a] - attrs[b]);
+        const pick = delta > 0 ? sorted[0] : sorted[sorted.length - 1];
+        attrs[pick] = clamp((attrs[pick] || 60) + delta, 20, 99);
+        p.attrs = attrs;
+        p.ovr = clamp(p.ovr + delta, 40, 99);
+        log.push({ name: p.name, team: team ? team.zh : tid, ovr: p.ovr, delta, age: p.age + 1 });
+      }
+      p.age = (p.age || 20) + 1;
+      p.rookie = false;
+      // 40 岁老将退役（从联盟移除）
+      if (p.age >= 40) continue;
+      keep.push(p);
+    }
+    state.league[tid] = keep;
+  }
+  state.rngState = (rng() * 4294967296) >>> 0 || 12345;
+  state.lastNpcGrowthLog = log.slice(0, 12);
+  return log;
 }
 
 function makeSeasonRoster(state, team, rng) {
@@ -3137,7 +3299,7 @@ function nextOpponent(state) {
   return opp ? { id: opp.id, zh: opp.zh, abbr: opp.abbr, color: opp.color, league: opp.league, strength: opp.strength, home: !!g.home } : null;
 }
 
-// 生成一笔联盟交易；若涉及能力>80 的球员则返回提示信息
+// 生成一笔联盟交易；若涉及能力>80 的球员则返回提示信息。真正移动球员归属（持久化联盟 + 当前赛季 roster）
 function tryGenerateTrade(state, season, teamTable, rng) {
   const teams = Object.values(TEAMS).filter(t => t.league === season.leagueId);
   if (teams.length < 3) return null;
@@ -3145,15 +3307,31 @@ function tryGenerateTrade(state, season, teamTable, rng) {
   let teamB = teams[Math.floor(rng() * teams.length)];
   let guard = 0;
   while (teamB.id === teamA.id && guard++ < 10) teamB = teams[Math.floor(rng() * teams.length)];
-  // 从两队 roster 各取一个 OVR>75 的球员做交易
-  const rosterA = season.rosters.get(teamA.id) || [];
-  const rosterB = season.rosters.get(teamB.id) || [];
-  const candA = rosterA.filter(p => p.ovr >= 75 && !p.isMe);
-  const candB = rosterB.filter(p => p.ovr >= 75 && !p.isMe);
+  // 优先从持久化联盟取球员（真实交易）；无则退回赛季 roster
+  const srcA = (state.league && state.league[teamA.id]) || (season.rosters.get(teamA.id) || []);
+  const srcB = (state.league && state.league[teamB.id]) || (season.rosters.get(teamB.id) || []);
+  const candA = srcA.filter(p => p.ovr >= 75 && !p.isMe);
+  const candB = srcB.filter(p => p.ovr >= 75 && !p.isMe);
   if (!candA.length || !candB.length) return null;
   const pA = candA[Math.floor(rng() * candA.length)];
   const pB = candB[Math.floor(rng() * candB.length)];
   const notable = Math.max(pA.ovr, pB.ovr) >= 80;
+  // 真正交换归属
+  const ia = srcA.indexOf(pA);
+  const ib = srcB.indexOf(pB);
+  if (ia >= 0 && ib >= 0) {
+    srcA.splice(ia, 1);
+    srcB.splice(ib, 1);
+    srcA.push(pB);
+    srcB.push(pA);
+    // 同步当前赛季 roster（若引用不同）
+    if (state.league) {
+      const rA = season.rosters.get(teamA.id);
+      const rB = season.rosters.get(teamB.id);
+      if (rA && rA !== srcA) { rA.splice(ia, 1); rA.push(pB); }
+      if (rB && rB !== srcB) { rB.splice(ib, 1); rB.push(pA); }
+    }
+  }
   return {
     age: state.player.age,
     teamA: teamA.zh,
@@ -3201,36 +3379,50 @@ function requestTrade(state) {
 function seasonOffseason(state) {
   const team = state.currentTeamId ? TEAMS[state.currentTeamId] : null;
   if (!team) return null;
-  // 赛季后交易窗口：生成几笔潜在交易 + 明星退役信息
+  // 赛季结束：联盟 NPC 成长一年（跨赛季保留，需在生成休赛期内容前执行）
+  if (state.league) {
+    applyNpcDevelopment(state);
+  }
   const rng = mulberry32(state.rngState ^ 0x5eed);
   const trades = [];
   const teams = Object.values(TEAMS).filter(t => t.league === team.league && t.id !== team.id);
-  const poolTeams = __nbaPool ? Object.values(__nbaPool) : [];
+  // 真实交易：从持久化联盟球员中交换，真正移动归属
+  const leagueTeams = Object.values(TEAMS).filter(t => t.league === team.league && t.id !== team.id);
   for (let i = 0; i < 3; i++) {
-    const tA = teams[Math.floor(rng() * teams.length)];
-    const tB = teams[Math.floor(rng() * teams.length)];
+    const tA = leagueTeams[Math.floor(rng() * leagueTeams.length)];
+    const tB = leagueTeams[Math.floor(rng() * leagueTeams.length)];
     if (!tA || !tB || tA.id === tB.id) continue;
-    let pA = null, pB = null;
-    if (poolTeams.length && rng() < 0.6) {
-      const tpA = poolTeams[Math.floor(rng() * poolTeams.length)];
-      const tpB = poolTeams[Math.floor(rng() * poolTeams.length)];
-      if (tpA && tpA.length) pA = tpA[Math.floor(rng() * tpA.length)];
-      if (tpB && tpB.length) pB = tpB[Math.floor(rng() * tpB.length)];
-    }
+    const rosterA = state.league && state.league[tA.id] ? state.league[tA.id] : [];
+    const rosterB = state.league && state.league[tB.id] ? state.league[tB.id] : [];
+    const candA = rosterA.filter(p => !p.isMe);
+    const candB = rosterB.filter(p => !p.isMe);
+    if (!candA.length || !candB.length) continue;
+    const pA = candA[Math.floor(rng() * candA.length)];
+    const pB = candB[Math.floor(rng() * candB.length)];
     if (!pA || !pB) continue;
-    const nameA = pA.cname || pA.name;
-    const nameB = pB.cname || pB.name;
     if (Math.max(pA.ovr, pB.ovr) < 78) continue;
+    // 真正交换归属（持久化联盟生效）
+    const ia = rosterA.indexOf(pA);
+    const ib = rosterB.indexOf(pB);
+    if (ia < 0 || ib < 0) continue;
+    rosterA.splice(ia, 1);
+    rosterB.splice(ib, 1);
+    rosterA.push(pB);
+    rosterB.push(pA);
     trades.push({
       teamA: tA.zh, teamB: tB.zh,
-      fromAToB: nameA, fromBToA: nameB,
+      fromAToB: pA.name, fromBToA: pB.name,
       ovrA: pA.ovr, ovrB: pB.ovr,
+      notable: Math.max(pA.ovr, pB.ovr) >= 82,
     });
   }
-  // 每年随机生成联盟新秀（选秀结果）
+  // 每年生成联盟新秀（含潜力），注入持久化联盟的弱队
   const rookies = generateDraftClass(state, rng);
   state.rookiePool = state.rookiePool || [];
   state.rookiePool.push(...rookies);
+  if (state.league) {
+    injectRookiesIntoLeague(state, rookies);
+  }
   // 休赛期国家队比赛（2-3 场 vs 随机国家）
   const nationalGames = generateNationalGames(state, rng);
   state.rngState = (rng() * 4294967296) >>> 0 || 12345;
@@ -3278,17 +3470,49 @@ function generateDraftClass(state, rng) {
     // 新秀能力 60-82，少数天才更高
     const ovr = Math.floor(rng() * 23) + 60;
     const isStar = rng() < 0.12;
+    const finalOvr = isStar ? Math.min(99, ovr + 8) : ovr;
     rookies.push({
       name,
       pos,
-      ovr: isStar ? Math.min(99, ovr + 8) : ovr,
+      ovr: finalOvr,
+      potential: clamp(finalOvr + (isStar ? 8 + Math.floor(rng() * 8) : 4 + Math.floor(rng() * 8)), 62, 99),
       draftAge: 19 + Math.floor(rng() * 3),
+      age: 19 + Math.floor(rng() * 3),
       pick: i + 1,
-      attrs: attrsForOvr(ovr, pos),
+      attrs: attrsForOvr(finalOvr, pos),
       isStar,
+      rookie: true,
     });
   }
   return rookies;
+}
+
+// 把新秀注入持久化联盟（分配到同联赛 OVR 偏弱的球队），确保下赛季 roster 含新秀
+function injectRookiesIntoLeague(state, rookies) {
+  if (!state.league || !rookies || !rookies.length) return;
+  const myLeagueId = state.currentTeamId ? TEAMS[state.currentTeamId].league : null;
+  const leagueTeamIds = Object.keys(state.league).filter(tid => {
+    const t = TEAMS[tid];
+    return t && (!myLeagueId || t.league === myLeagueId);
+  });
+  // 按球队整体 OVR 升序（弱队优先拿新秀）
+  leagueTeamIds.sort((a, b) => {
+    const avgA = state.league[a].reduce((s, p) => s + (p.ovr || 70), 0) / Math.max(1, state.league[a].length);
+    const avgB = state.league[b].reduce((s, p) => s + (p.ovr || 70), 0) / Math.max(1, state.league[b].length);
+    return avgA - avgB;
+  });
+  let idx = 0;
+  for (const r of rookies) {
+    if (idx >= leagueTeamIds.length) break;
+    const tid = leagueTeamIds[idx];
+    const roster = state.league[tid];
+    if (!roster || roster.some(p => p.name === r.name)) continue;
+    roster.push({
+      name: r.name, pos: r.pos, ovr: r.ovr, starter: false, isMe: false,
+      potential: r.potential, age: r.age, attrs: r.attrs, rookie: true,
+    });
+    idx++;
+  }
 }
 
 // 明星球员退役：赛季末生成退役名单（含真实球员）
@@ -3873,30 +4097,56 @@ function generateLeagueAwards(state, resultOverride) {
   const pool = [];
   const usedNames = new Set();
 
-  // NBA 联赛：只使用真实球员池（30 队现役真实球员），按 OVR 估算场均参与评选
+  // NBA 联赛：优先用持久化联盟球员池（含成长/新秀），否则退回真实球员池
   const isNba = season.kind === 'pro' && LEAGUES[season.leagueId] && LEAGUES[season.leagueId].tier === 1;
-  const nbaRealUsed = isNba && !!__nbaPool;
+  const nbaRealUsed = isNba && (!!state.league || !!__nbaPool);
   if (nbaRealUsed) {
-    for (const [abbr, players] of Object.entries(__nbaPool)) {
-      if (!Array.isArray(players) || !players.length) continue;
-      const sorted = players.slice().sort((a, b) => b.ovr - a.ovr).slice(0, 5);
-      for (const p of sorted) {
-        if (!p || usedNames.has(p.cname || p.name)) continue;
-        usedNames.add(p.cname || p.name);
-        const pos = mainPosOf(p.pos);
-        const ovr = p.ovr;
-        const posBias = POS_ATTR_BIAS[pos] || {};
-        // 按 OVR 和属性估算场均数据（贴近真实 NBA 水平）
-        const isBig = ['PF', 'C'].includes(pos);
-        const isPG = pos === 'PG';
-        const avg = {
-          pts: Math.max(4, (ovr - 55) * 0.72 + (p.FIN || posBias.FIN || 60) * 0.06 + Math.random() * 2.5),
-          reb: Math.max(1.5, (isBig ? 4 : 1.5) + (p.REB || posBias.REB || 40) * 0.12 + Math.random() * 1.5),
-          ast: Math.max(0.8, (isPG ? 3 : 0.8) + (p.PAS || posBias.PAS || 40) * 0.1 + Math.random() * 1.5),
-          stl: Math.max(0.2, (p.PDEF || 50) * 0.018 + Math.random() * 0.7),
-          blk: Math.max(0.1, (p.BLK || 40) * 0.024 + (isBig ? Math.random() * 1.2 : Math.random() * 0.3)),
-        };
-        pool.push({ name: p.cname || p.name, pos, ovr, teamId: null, avg, g: 55 + Math.floor(Math.random() * 20), real: true });
+    // 从持久化联盟收集（反映成长与每年新秀）
+    if (state.league) {
+      for (const [tid, players] of Object.entries(state.league)) {
+        if (!Array.isArray(players) || !players.length) continue;
+        const sorted = players.slice().sort((a, b) => b.ovr - a.ovr).slice(0, 5);
+        for (const p of sorted) {
+          if (!p || usedNames.has(p.name)) continue;
+          usedNames.add(p.name);
+          const pos = p.pos;
+          const ovr = p.ovr || 70;
+          const posBias = POS_ATTR_BIAS[pos] || {};
+          const isBig = ['PF', 'C'].includes(pos);
+          const isPG = pos === 'PG';
+          const a = p.attrs || {};
+          const avg = {
+            pts: Math.max(4, (ovr - 55) * 0.72 + (a.FIN ?? posBias.FIN ?? 60) * 0.06 + Math.random() * 2.5),
+            reb: Math.max(1.5, (isBig ? 4 : 1.5) + (a.REB ?? posBias.REB ?? 40) * 0.12 + Math.random() * 1.5),
+            ast: Math.max(0.8, (isPG ? 3 : 0.8) + (a.PAS ?? posBias.PAS ?? 40) * 0.1 + Math.random() * 1.5),
+            stl: Math.max(0.2, (a.PDEF ?? 50) * 0.018 + Math.random() * 0.7),
+            blk: Math.max(0.1, (a.BLK ?? 40) * 0.024 + (isBig ? Math.random() * 1.2 : Math.random() * 0.3)),
+          };
+          pool.push({ name: p.name, pos, ovr, teamId: tid, avg, g: 55 + Math.floor(Math.random() * 20), real: true, rookie: !!p.rookie });
+        }
+      }
+    }
+    if (!pool.length) {
+      for (const [abbr, players] of Object.entries(__nbaPool || {})) {
+        if (!Array.isArray(players) || !players.length) continue;
+        const sorted = players.slice().sort((a, b) => b.ovr - a.ovr).slice(0, 5);
+        for (const p of sorted) {
+          if (!p || usedNames.has(p.cname || p.name)) continue;
+          usedNames.add(p.cname || p.name);
+          const pos = mainPosOf(p.pos);
+          const ovr = p.ovr;
+          const posBias = POS_ATTR_BIAS[pos] || {};
+          const isBig = ['PF', 'C'].includes(pos);
+          const isPG = pos === 'PG';
+          const avg = {
+            pts: Math.max(4, (ovr - 55) * 0.72 + (p.FIN || posBias.FIN || 60) * 0.06 + Math.random() * 2.5),
+            reb: Math.max(1.5, (isBig ? 4 : 1.5) + (p.REB || posBias.REB || 40) * 0.12 + Math.random() * 1.5),
+            ast: Math.max(0.8, (isPG ? 3 : 0.8) + (p.PAS || posBias.PAS || 40) * 0.1 + Math.random() * 1.5),
+            stl: Math.max(0.2, (p.PDEF || 50) * 0.018 + Math.random() * 0.7),
+            blk: Math.max(0.1, (p.BLK || 40) * 0.024 + (isBig ? Math.random() * 1.2 : Math.random() * 0.3)),
+          };
+          pool.push({ name: p.cname || p.name, pos, ovr, teamId: null, avg, g: 55 + Math.floor(Math.random() * 20), real: true });
+        }
       }
     }
   }
@@ -5648,7 +5898,7 @@ function galleryState() {
     return { unlocked: new Map(), total: TITLES.length };
   }
 }
-  __M['engine.js'] = { xmur3, mulberry32, nextRng, roll, chance, pickWeighted, genSeed, fmtMoney, fmtInt, fmtAvg, percentileOf, clamp, teamById, leagueById, countryById, ROLE_KEYS, roleName, roleFactor, tournamentSchedule, newGame, marketValueOf, salaryOf, makeContract, renewContract, contractTierZh, upgradeAttr, recalcOverall, beginSeason, setNbaPool, nbaPoolTeam, simNextGames, applyRegularGameResult, nextOpponent, requestTrade, seasonOffseason, starRetirements, generateStandings, beginPlayoffs, simPlayoffGames, applyPlayoffGameResult, isPlayoffKeyGame, getMyRoster, finishSeason, generateLeagueAwards, nbaJumpInfo, tryNBAJump, step, decide, makeGameContext, applyGameResult, maxOverall, peakSeason, teamById2, clubsOf, trophyCounts, trophyZh, awardZh, tournamentZh, resultZh, computeTitles, nationalLine, finalize, buildSummary, isLight, endingZh, saveState, saveStateAsync, loadState, loadStateAsync, listSaves, listSavesAsync, clearState, clearStateAsync, saveArchive, loadArchiveSync, loadArchive, galleryState };
+  __M['engine.js'] = { xmur3, mulberry32, nextRng, roll, chance, pickWeighted, genSeed, fmtMoney, fmtInt, fmtAvg, percentileOf, clamp, teamById, leagueById, countryById, ROLE_KEYS, roleName, roleFactor, tournamentSchedule, newGame, marketValueOf, salaryOf, makeContract, renewContract, contractTierZh, upgradeAttr, recalcOverall, beginSeason, setNbaPool, nbaPoolTeam, applyNpcDevelopment, simNextGames, applyRegularGameResult, nextOpponent, requestTrade, seasonOffseason, starRetirements, generateStandings, beginPlayoffs, simPlayoffGames, applyPlayoffGameResult, isPlayoffKeyGame, getMyRoster, finishSeason, generateLeagueAwards, nbaJumpInfo, tryNBAJump, step, decide, makeGameContext, applyGameResult, maxOverall, peakSeason, teamById2, clubsOf, trophyCounts, trophyZh, awardZh, tournamentZh, resultZh, computeTitles, nationalLine, finalize, buildSummary, isLight, endingZh, saveState, saveStateAsync, loadState, loadStateAsync, listSaves, listSavesAsync, clearState, clearStateAsync, saveArchive, loadArchiveSync, loadArchive, galleryState };
   })();
 
   // ===== ui.js (deps: data.js,build.js,simEngine.js,engine.js) =====
@@ -8212,18 +8462,36 @@ loadPool().then((pool) => {
 });
 
 // 调试钩子（供自动化测试使用）
-window.__testState = () => ({
-  view: app.view,
-  receipt: app.receipt,
-  pendingBanner: app.pendingBanner,
-  lastBanner: !!app.lastBanner,
-  phase: app.state ? app.state.phase : null,
-  stage: app.state ? app.state.stage : null,
-  age: app.state ? app.state.player.age : null,
-  currentEvent: app.state && app.state.currentEvent ? app.state.currentEvent.type : null,
-  eventOptions: app.state && app.state.currentEvent ? app.state.currentEvent.options.length : 0,
-  lastOutcome: app.state && app.state.lastEventOutcome ? app.state.lastEventOutcome.text : null,
-});
+window.__testState = () => {
+  const st = app.state;
+  const lg = st && st.league;
+  let leagueSummary = null;
+  if (lg) {
+    const teams = Object.values(lg);
+    const players = teams.flat();
+    const rookies = players.filter(p => p && p.rookie);
+    leagueSummary = {
+      teams: teams.length,
+      players: players.length,
+      rookies: rookies.length,
+      sample: players.slice(0, 3).map(p => ({ n: p.name, o: p.ovr, a: p.age, pot: p.potential })),
+      top5: players.slice().sort((a, b) => b.ovr - a.ovr).slice(0, 5).map(p => ({ n: p.name, o: p.ovr, a: p.age })),
+    };
+  }
+  return {
+    view: app.view,
+    receipt: app.receipt,
+    pendingBanner: app.pendingBanner,
+    lastBanner: !!app.lastBanner,
+    phase: st ? st.phase : null,
+    stage: st ? st.stage : null,
+    age: st ? st.player.age : null,
+    currentEvent: st && st.currentEvent ? st.currentEvent.type : null,
+    eventOptions: st && st.currentEvent ? st.currentEvent.options.length : 0,
+    lastOutcome: st && st.lastEventOutcome ? st.lastEventOutcome.text : null,
+    league: leagueSummary,
+  };
+};
 
 // 兜底保存：页面切后台/关闭时尽力写入 IndexedDB，避免进度丢失
 if (typeof document !== 'undefined') {

@@ -2555,18 +2555,36 @@ loadPool().then((pool) => {
 });
 
 // 调试钩子（供自动化测试使用）
-window.__testState = () => ({
-  view: app.view,
-  receipt: app.receipt,
-  pendingBanner: app.pendingBanner,
-  lastBanner: !!app.lastBanner,
-  phase: app.state ? app.state.phase : null,
-  stage: app.state ? app.state.stage : null,
-  age: app.state ? app.state.player.age : null,
-  currentEvent: app.state && app.state.currentEvent ? app.state.currentEvent.type : null,
-  eventOptions: app.state && app.state.currentEvent ? app.state.currentEvent.options.length : 0,
-  lastOutcome: app.state && app.state.lastEventOutcome ? app.state.lastEventOutcome.text : null,
-});
+window.__testState = () => {
+  const st = app.state;
+  const lg = st && st.league;
+  let leagueSummary = null;
+  if (lg) {
+    const teams = Object.values(lg);
+    const players = teams.flat();
+    const rookies = players.filter(p => p && p.rookie);
+    leagueSummary = {
+      teams: teams.length,
+      players: players.length,
+      rookies: rookies.length,
+      sample: players.slice(0, 3).map(p => ({ n: p.name, o: p.ovr, a: p.age, pot: p.potential })),
+      top5: players.slice().sort((a, b) => b.ovr - a.ovr).slice(0, 5).map(p => ({ n: p.name, o: p.ovr, a: p.age })),
+    };
+  }
+  return {
+    view: app.view,
+    receipt: app.receipt,
+    pendingBanner: app.pendingBanner,
+    lastBanner: !!app.lastBanner,
+    phase: st ? st.phase : null,
+    stage: st ? st.stage : null,
+    age: st ? st.player.age : null,
+    currentEvent: st && st.currentEvent ? st.currentEvent.type : null,
+    eventOptions: st && st.currentEvent ? st.currentEvent.options.length : 0,
+    lastOutcome: st && st.lastEventOutcome ? st.lastEventOutcome.text : null,
+    league: leagueSummary,
+  };
+};
 
 // 兜底保存：页面切后台/关闭时尽力写入 IndexedDB，避免进度丢失
 if (typeof document !== 'undefined') {
