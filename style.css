@@ -500,6 +500,19 @@ select.team-select {
 .sum-ending .p { margin-top: 4px; font-size: 13px; font-weight: 900; color: var(--accent-2); }
 .sum-ending .e { margin-top: 8px; font-size: 12px; line-height: 1.8; color: rgba(253,230,138,0.8); font-weight: 700; }
 
+.legacy-card { border-radius: 14px; border: 1px solid var(--line); background: var(--panel); padding: 14px; }
+.legacy-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.legacy-score, .legacy-rank { text-align: center; flex: 1; }
+.legacy-card .k { font-size: 10px; font-weight: 800; letter-spacing: 0.14em; color: var(--text-3); }
+.legacy-score .v { margin-top: 4px; font-size: 30px; font-weight: 900; color: var(--amber); line-height: 1; }
+.legacy-rank .v { margin-top: 6px; font-size: 14px; font-weight: 900; color: var(--accent-2); line-height: 1.2; }
+.legacy-card .tier { margin-top: 6px; font-size: 12px; font-weight: 800; color: var(--text-2); }
+.legacy-card .tier.muted-2 { color: var(--text-3); }
+.legacy-breakdown { margin-top: 12px; border-top: 1px dashed var(--line); padding-top: 10px; }
+.legacy-breakdown .banner-row { display: flex; justify-content: space-between; padding: 2px 0; }
+.legacy-breakdown .k { font-size: 12px; color: var(--text-2); font-weight: 600; }
+.legacy-breakdown .v { font-size: 12px; font-weight: 800; color: var(--amber); }
+
 .sum-block { margin: 14px 16px 0; }
 .sum-block h4 { margin: 0 0 10px; font-size: 10px; font-weight: 900; letter-spacing: 0.16em; color: var(--text-3); text-align: center; }
 .sum-stats {

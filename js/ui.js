@@ -788,6 +788,7 @@ function summaryHTML() {
   const trophyCounts = E.trophyCounts(s.totals.trophies);
   const trophyEntries = Object.entries(trophyCounts).slice(0, 10);
   const titleChips = sum.titles.map(x => `<span class="sum-title">${TITLES.find(t => t.id === x.id)?.art || '🏅'} ${esc(TITLES.find(t => t.id === x.id)?.name || '')}</span>`).join('');
+  const legacyHTML = legacyCardHTML(sum.legacy);
   return shell(`
     <div class="scroll summary-scroll">
       <div class="sum-hero">
@@ -826,6 +827,8 @@ function summaryHTML() {
           <div class="e">${esc(sum.epitaph)}</div>
         </div>
       </div>
+
+      ${legacyHTML}
 
       <div class="sum-block">
         <div class="sum-stats">
@@ -937,6 +940,29 @@ function summaryHTML() {
   `);
 }
 
+function legacyCardHTML(lg) {
+  if (!lg) return '';
+  const rankTxt = lg.rank != null ? `历史第 ${lg.rank} 名` : '未入历史榜单';
+  const breakdownRows = (lg.breakdown || []).map(b => `<div class="banner-row"><span class="k">${esc(b.label)}</span><span class="v num">+${b.v}</span></div>`).join('');
+  const honorTxt = [lg.champ ? `${lg.champ}冠` : '', lg.mvp ? `${lg.mvp} MVP` : '', lg.fmvp ? `${lg.fmvp} FMVP` : '', lg.dpoy ? `${lg.dpoy} 防守` : '', lg.allstar ? `${lg.allstar} 全明星` : '', lg.allNba ? `${lg.allNba} 最佳阵容` : ''].filter(Boolean).join(' · ');
+  return `
+    <div class="sum-block legacy-card">
+      <div class="legacy-top">
+        <div class="legacy-score">
+          <div class="k">传奇评分</div>
+          <div class="v num">${lg.score}</div>
+          <div class="tier">${esc(lg.tierZh)}</div>
+        </div>
+        <div class="legacy-rank">
+          <div class="k">历史地位</div>
+          <div class="v">${rankTxt}</div>
+          <div class="tier muted-2">${honorTxt}</div>
+        </div>
+      </div>
+      ${breakdownRows ? `<div class="legacy-breakdown">${breakdownRows}</div>` : ''}
+    </div>`;
+}
+
 function trophyMeta(id) {
   if (id === 'world_cup') return { art: '🏆', name: '世界杯' };
   if (id === 'olympics') return { art: '🥇', name: '奥运会' };
@@ -1025,6 +1051,7 @@ function archiveDetailHTML() {
           <div class="e">${esc(a.epitaph)}</div>
         </div>
       </div>
+      ${legacyCardHTML(a.legacy)}
       <div class="sum-block">
         <div class="sum-stats">
           <div><div class="k">出场</div><div class="v num">${E.fmtInt(t.apps)}</div></div>

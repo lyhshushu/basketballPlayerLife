@@ -5400,6 +5400,89 @@ function trophyCounts(trophies) {
   return counts;
 }
 
+// ---------- 传奇评分 / 历史排名（移植 perfect-player calculateLegacyResult 思路） ----------
+function legacyScore(state) {
+  const t = state.totals;
+  const awards = t.awards || [];
+  const trophies = t.trophies || [];
+  const count = (id) => awards.filter(a => a === id).length;
+  const peak = maxOverall(state);
+  const proSeasons = state.seasons.filter(s => !s.youth && s.teamId);
+  const clubs = clubsOf(state);
+  const champCount = trophies.filter(x => x.startsWith('league:') || x.startsWith('cup:')).length;
+  const cupCount = trophies.filter(x => x.startsWith('cup:')).length;
+  const champLeagueCount = trophies.filter(x => x.startsWith('league:')).length;
+  const won = (id) => trophies.includes(id);
+
+  const breakdown = [];
+  const add = (label, v) => { if (v) breakdown.push({ label, v }); };
+
+  let score = 0;
+  // 荣誉分（移植 perfect-player：冠军18/FMVP14/MVP16/DPOY10/最佳阵容5/全明星3）
+  const champ = champLeagueCount;
+  add(`${champ} 次联赛冠军`, champ * 18); score += champ * 18;
+  const fmvp = count('fmvp');
+  add(`${fmvp} 次总决赛MVP`, fmvp * 14); score += fmvp * 14;
+  const mvp = count('mvp');
+  add(`${mvp} 次常规赛MVP`, mvp * 16); score += mvp * 16;
+  const dpoy = count('dpoy');
+  add(`${dpoy} 次最佳防守`, dpoy * 10); score += dpoy * 10;
+  const allNba = count('all_nba_1') * 5 + count('all_nba_2') * 3 + count('all_nba_3') * 2 + count('all_team');
+  add(`${allNba} 次最佳阵容`, allNba); score += allNba;
+  const allstar = count('allstar');
+  add(`${allstar} 次全明星`, allstar * 3); score += allstar * 3;
+  const dataTitles = count('scoring_title') * 4 + count('rebound_title') * 3 + count('assist_title') * 3 + count('block_title') * 2 + count('steal_title') * 2;
+  add(`数据王`, dataTitles); score += dataTitles;
+  const mip = count('mip');
+  add(`${mip} 次进步最快`, mip * 3); score += mip * 3;
+  const sixth = count('sixth_man');
+  add(`${sixth} 次最佳第六人`, sixth * 2); score += sixth * 2;
+
+  // 国家队/大赛
+  const natBonus = (won('world_cup') ? 20 : 0) + (won('olympics') ? 20 : 0) + (won('continental') ? 10 : 0);
+  if (natBonus) { add('国家队大赛冠军', natBonus); score += natBonus; }
+  const tourneyMvp = count('tournament_mvp');
+  add(`${tourneyMvp} 次大赛MVP`, tourneyMvp * 8); score += tourneyMvp * 8;
+
+  // 生涯数据加成（移植：min(35, 总得分/2500) + min(18, 场次/120)）
+  const ptsBonus = Math.min(35, Math.round(t.pts / 2500));
+  add(`总得分 ${fmtInt(Math.round(t.pts))}`, ptsBonus); score += ptsBonus;
+  const gamesBonus = Math.min(18, Math.round(t.apps / 120));
+  add(`出场 ${fmtInt(t.apps)} 场`, gamesBonus); score += gamesBonus;
+
+  // 忠诚：单队 ≥8 个职业赛季
+  const longestStay = Math.max(0, ...clubs.map(c => c.seasons));
+  if (longestStay >= 8) { add(`忠守一城 ${longestStay} 季`, 10); score += 10; }
+  // 巅峰能力
+  if (peak >= 94) { add(`巅峰 ${peak}`, 8); score += 8; }
+  else if (peak >= 90) { add(`巅峰 ${peak}`, 5); score += 5; }
+  // 生涯长度
+  const lenBonus = Math.min(6, Math.floor(proSeasons.length / 3));
+  if (lenBonus) { add(`${proSeasons.length} 个赛季`, lenBonus); score += lenBonus; }
+  // 总冠军（杯赛额外）+ 决赛亚军加权
+  if (cupCount) { add(`${cupCount} 次杯赛`, cupCount * 6); score += cupCount * 6; }
+
+  // 档位判定（移植 perfect-player 档位线）
+  let tier, tierZh;
+  if (mvp >= 5 && champ >= 6 && fmvp >= 4) { tier = 'goat'; tierZh = '历史最佳'; }
+  else if (score >= 180) { tier = 'top10'; tierZh = '历史前十'; }
+  else if (score >= 155) { tier = 'top20'; tierZh = '历史前二十'; }
+  else if (score >= 140) { tier = 'top100'; tierZh = '历史百大'; }
+  else if (score >= 100) { tier = 'hof_safe'; tierZh = '名人堂稳进'; }
+  else if (score >= 75) { tier = 'hof_border'; tierZh = '名人堂边缘'; }
+  else if (score >= 60) { tier = 'franchise'; tierZh = '队史传奇'; }
+  else { tier = 'solid'; tierZh = '优秀球员'; }
+
+  // 历史排名（按档位给一个合理名次区间）
+  let rank = null;
+  if (score >= 180) rank = Math.max(1, 11 - Math.floor((score - 180) / 20));
+  else if (score >= 155) rank = Math.max(11, 21 - Math.floor((score - 155) / 3));
+  else if (score >= 140) rank = Math.max(21, 101 - Math.floor((score - 140) * 3));
+  else if (score >= 75) rank = Math.max(101, 301 - Math.floor((score - 75) * 2.2));
+
+  return { score, tier, tierZh, rank, breakdown, mvp, fmvp, dpoy, champ, allstar, allNba, games: t.apps, pts: Math.round(t.pts) };
+}
+
 function trophyZh(id) {
   if (id === 'world_cup') return '世界杯';
   if (id === 'olympics') return '奥运会';
@@ -5677,6 +5760,7 @@ function buildSummary(state) {
     walkaway: state.walkaway,
     retirementReason: state.retirementReason,
     endingBeat: state.endingBeat,
+    legacy: legacyScore(state),
     savedAt: Date.now(),
   };
 }
@@ -5898,7 +5982,7 @@ function galleryState() {
     return { unlocked: new Map(), total: TITLES.length };
   }
 }
-  __M['engine.js'] = { xmur3, mulberry32, nextRng, roll, chance, pickWeighted, genSeed, fmtMoney, fmtInt, fmtAvg, percentileOf, clamp, teamById, leagueById, countryById, ROLE_KEYS, roleName, roleFactor, tournamentSchedule, newGame, marketValueOf, salaryOf, makeContract, renewContract, contractTierZh, upgradeAttr, recalcOverall, beginSeason, setNbaPool, nbaPoolTeam, applyNpcDevelopment, simNextGames, applyRegularGameResult, nextOpponent, requestTrade, seasonOffseason, starRetirements, generateStandings, beginPlayoffs, simPlayoffGames, applyPlayoffGameResult, isPlayoffKeyGame, getMyRoster, finishSeason, generateLeagueAwards, nbaJumpInfo, tryNBAJump, step, decide, makeGameContext, applyGameResult, maxOverall, peakSeason, teamById2, clubsOf, trophyCounts, trophyZh, awardZh, tournamentZh, resultZh, computeTitles, nationalLine, finalize, buildSummary, isLight, endingZh, saveState, saveStateAsync, loadState, loadStateAsync, listSaves, listSavesAsync, clearState, clearStateAsync, saveArchive, loadArchiveSync, loadArchive, galleryState };
+  __M['engine.js'] = { xmur3, mulberry32, nextRng, roll, chance, pickWeighted, genSeed, fmtMoney, fmtInt, fmtAvg, percentileOf, clamp, teamById, leagueById, countryById, ROLE_KEYS, roleName, roleFactor, tournamentSchedule, newGame, marketValueOf, salaryOf, makeContract, renewContract, contractTierZh, upgradeAttr, recalcOverall, beginSeason, setNbaPool, nbaPoolTeam, applyNpcDevelopment, simNextGames, applyRegularGameResult, nextOpponent, requestTrade, seasonOffseason, starRetirements, generateStandings, beginPlayoffs, simPlayoffGames, applyPlayoffGameResult, isPlayoffKeyGame, getMyRoster, finishSeason, generateLeagueAwards, nbaJumpInfo, tryNBAJump, step, decide, makeGameContext, applyGameResult, maxOverall, peakSeason, teamById2, clubsOf, trophyCounts, legacyScore, trophyZh, awardZh, tournamentZh, resultZh, computeTitles, nationalLine, finalize, buildSummary, isLight, endingZh, saveState, saveStateAsync, loadState, loadStateAsync, listSaves, listSavesAsync, clearState, clearStateAsync, saveArchive, loadArchiveSync, loadArchive, galleryState };
   })();
 
   // ===== ui.js (deps: data.js,build.js,simEngine.js,engine.js) =====
@@ -6695,6 +6779,7 @@ function summaryHTML() {
   const trophyCounts = E.trophyCounts(s.totals.trophies);
   const trophyEntries = Object.entries(trophyCounts).slice(0, 10);
   const titleChips = sum.titles.map(x => `<span class="sum-title">${TITLES.find(t => t.id === x.id)?.art || '🏅'} ${esc(TITLES.find(t => t.id === x.id)?.name || '')}</span>`).join('');
+  const legacyHTML = legacyCardHTML(sum.legacy);
   return shell(`
     <div class="scroll summary-scroll">
       <div class="sum-hero">
@@ -6733,6 +6818,8 @@ function summaryHTML() {
           <div class="e">${esc(sum.epitaph)}</div>
         </div>
       </div>
+
+      ${legacyHTML}
 
       <div class="sum-block">
         <div class="sum-stats">
@@ -6844,6 +6931,29 @@ function summaryHTML() {
   `);
 }
 
+function legacyCardHTML(lg) {
+  if (!lg) return '';
+  const rankTxt = lg.rank != null ? `历史第 ${lg.rank} 名` : '未入历史榜单';
+  const breakdownRows = (lg.breakdown || []).map(b => `<div class="banner-row"><span class="k">${esc(b.label)}</span><span class="v num">+${b.v}</span></div>`).join('');
+  const honorTxt = [lg.champ ? `${lg.champ}冠` : '', lg.mvp ? `${lg.mvp} MVP` : '', lg.fmvp ? `${lg.fmvp} FMVP` : '', lg.dpoy ? `${lg.dpoy} 防守` : '', lg.allstar ? `${lg.allstar} 全明星` : '', lg.allNba ? `${lg.allNba} 最佳阵容` : ''].filter(Boolean).join(' · ');
+  return `
+    <div class="sum-block legacy-card">
+      <div class="legacy-top">
+        <div class="legacy-score">
+          <div class="k">传奇评分</div>
+          <div class="v num">${lg.score}</div>
+          <div class="tier">${esc(lg.tierZh)}</div>
+        </div>
+        <div class="legacy-rank">
+          <div class="k">历史地位</div>
+          <div class="v">${rankTxt}</div>
+          <div class="tier muted-2">${honorTxt}</div>
+        </div>
+      </div>
+      ${breakdownRows ? `<div class="legacy-breakdown">${breakdownRows}</div>` : ''}
+    </div>`;
+}
+
 function trophyMeta(id) {
   if (id === 'world_cup') return { art: '🏆', name: '世界杯' };
   if (id === 'olympics') return { art: '🥇', name: '奥运会' };
@@ -6932,6 +7042,7 @@ function archiveDetailHTML() {
           <div class="e">${esc(a.epitaph)}</div>
         </div>
       </div>
+      ${legacyCardHTML(a.legacy)}
       <div class="sum-block">
         <div class="sum-stats">
           <div><div class="k">出场</div><div class="v num">${E.fmtInt(t.apps)}</div></div>
