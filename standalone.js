@@ -1694,6 +1694,7 @@ function simulateGame(homeTeam, awayTeam, homeRoster, awayRoster, opts = {}) {
 
   // 我方球员加入竞争
   let tacticsMod = 0; // 战术影响：正=我+命中，负=我-命中
+  let tacticsResult = null; // 战术结果：{ mode, success, diff, triggered }
   const tqc = opts.tactics;
 
   for (let q = 1; q <= maxQ; q++) {
@@ -1712,6 +1713,7 @@ function simulateGame(homeTeam, awayTeam, homeRoster, awayRoster, opts = {}) {
         } else if (t && !t.success) {
           tacticsMod = -0.1;
         }
+        tacticsResult = { mode: t ? t.mode : 'normal', success: t ? t.success : true, diff, triggered: true };
         add(`🎯 第四节开始，分差 ${Math.abs(diff)} 分。${tacticsMod > 0 ? '你的战术奏效了！' : tacticsMod < 0 ? '战术没有奏效…' : '按常规打法继续。'}`);
       }
     }
@@ -1771,6 +1773,7 @@ function simulateGame(homeTeam, awayTeam, homeRoster, awayRoster, opts = {}) {
     myAst: meBox ? meBox.ast : 0,
     myStl: meBox ? meBox.stl : 0,
     myBlk: meBox ? meBox.blk : 0,
+    tacticsResult,
   };
 }
 
@@ -6852,11 +6855,37 @@ function gameResultHTML() {
       <td>${p.pts}</td><td>${p.reb}</td><td>${p.ast}</td><td>${p.stl}</td><td>${p.blk}</td>
     </tr>`).join('');
   const myLine = g.meBox;
+  const tr = g.tacticsResult;
+  const tPref = app.tacticsPref || 'normal';
+  const tacticsHTML = (() => {
+    const zh = { attack: '⚡ 全力进攻', defense: '🛡️ 铁血防守', normal: '☑️ 常规打法' }[tr ? tr.mode : ''] || '战术';
+    if (tr) {
+      let text;
+      let cls;
+      if (tr.mode === 'normal') {
+        text = '按常规打法，未冒风险（无额外加成）';
+        cls = '';
+      } else if (tr.success) {
+        text = `战术奏效！${zh}成功，第四节命中 +10%`;
+        cls = ' win';
+      } else {
+        text = `战术失手…${zh}未成功，第四节命中 -10%`;
+        cls = ' neg';
+      }
+      return `<div class="tactics-result${cls}">🎯 ${text}</div>`;
+    }
+    // 选了进攻/防守但第四节分差拉开未触发
+    if (tPref !== 'normal') {
+      return `<div class="tactics-result">🎯 第四节开始比分已拉开，${zh}未生效</div>`;
+    }
+    return '';
+  })();
   return shell(`
     <div class="game-result ${won ? 'win' : 'lose'}">
       <div class="gr-badge">${won ? '🏆 胜利' : '💔 失利'}</div>
       <div class="gr-score num">${g.homeScore} : ${g.awayScore}</div>
       <div class="gr-teams">${esc(g.home.zh)} vs ${esc(g.away.zh)}</div>
+      ${tacticsHTML}
     </div>
     <div class="scroll" style="padding-top:10px">
       ${myLine ? `<div class="me-line">
@@ -7410,6 +7439,19 @@ window.BL = {
     if (!app.game) { clearInterval(app.gameTimer); return; }
     const speed = app.gameSpeed || 4;
     app.gameStep = Math.min(app.gameStep + speed, app.game.log.length);
+    // 战术结果：第四节比分接近时生效，首次出现即弹醒目提示
+    if (app.game.tacticsResult && !app.game.tacticsShown) {
+      app.game.tacticsShown = true;
+      const tr = app.game.tacticsResult;
+      const zh = { attack: '⚡ 全力进攻', defense: '🛡️ 铁血防守', normal: '☑️ 常规打法' }[tr.mode] || '战术';
+      if (tr.mode === 'normal') {
+        showAutoToast(`🎯 第四节开始，分差 ${Math.abs(tr.diff)} 分。按常规打法，未冒风险。`, 2600);
+      } else if (tr.success) {
+        showAutoToast(`🎯 战术奏效！${zh}成功，第四节命中 +10%`, 2600);
+      } else {
+        showAutoToast(`💔 战术失手…${zh}未成功，第四节命中 -10%`, 2600);
+      }
+    }
     const cur = app.game.scoreSnap[app.gameStep - 1] || [0, 0];
     // 简单节次推断（共4节+加时）
     const totalPlays = app.game.log.length;

@@ -461,6 +461,7 @@ export function simulateGame(homeTeam, awayTeam, homeRoster, awayRoster, opts = 
 
   // 我方球员加入竞争
   let tacticsMod = 0; // 战术影响：正=我+命中，负=我-命中
+  let tacticsResult = null; // 战术结果：{ mode, success, diff, triggered }
   const tqc = opts.tactics;
 
   for (let q = 1; q <= maxQ; q++) {
@@ -479,6 +480,7 @@ export function simulateGame(homeTeam, awayTeam, homeRoster, awayRoster, opts = 
         } else if (t && !t.success) {
           tacticsMod = -0.1;
         }
+        tacticsResult = { mode: t ? t.mode : 'normal', success: t ? t.success : true, diff, triggered: true };
         add(`🎯 第四节开始，分差 ${Math.abs(diff)} 分。${tacticsMod > 0 ? '你的战术奏效了！' : tacticsMod < 0 ? '战术没有奏效…' : '按常规打法继续。'}`);
       }
     }
@@ -538,6 +540,7 @@ export function simulateGame(homeTeam, awayTeam, homeRoster, awayRoster, opts = 
     myAst: meBox ? meBox.ast : 0,
     myStl: meBox ? meBox.stl : 0,
     myBlk: meBox ? meBox.blk : 0,
+    tacticsResult,
   };
 }
 
