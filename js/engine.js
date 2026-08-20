@@ -3649,11 +3649,83 @@ export function endingZh(reason) {
 }
 
 // ---------- 存档 ----------
+// IndexedDB 存储层：对 file:// 兼容性优于 localStorage（安卓浏览器普遍可用）
+let _db = null;
+let _dbPromise = null;
+function openDB() {
+  if (_db) return Promise.resolve(_db);
+  if (_dbPromise) return _dbPromise;
+  if (typeof indexedDB === 'undefined') return Promise.reject(new Error('no idb'));
+  _dbPromise = new Promise((resolve, reject) => {
+    const req = indexedDB.open('bl-save-db', 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains('saves')) db.createObjectStore('saves', { keyPath: 'seed' });
+      if (!db.objectStoreNames.contains('archive')) db.createObjectStore('archive', { keyPath: 'seed' });
+    };
+    req.onsuccess = () => { _db = req.result; resolve(_db); };
+    req.onerror = () => { _dbPromise = null; reject(req.error); };
+  });
+  return _dbPromise;
+}
+function idbPut(store, data) {
+  return openDB().then(db => new Promise((res) => {
+    try {
+      const tx = db.transaction(store, 'readwrite');
+      tx.objectStore(store).put(data);
+      tx.oncomplete = () => res(true);
+      tx.onerror = () => res(false);
+      tx.onabort = () => res(false);
+    } catch { res(false); }
+  })).catch(() => false);
+}
+function idbGet(store, key) {
+  return openDB().then(db => new Promise((res) => {
+    try {
+      const tx = db.transaction(store, 'readonly');
+      const r = tx.objectStore(store).get(key);
+      r.onsuccess = () => res(r.result || null);
+      r.onerror = () => res(null);
+    } catch { res(null); }
+  })).catch(() => null);
+}
+function idbGetAll(store) {
+  return openDB().then(db => new Promise((res) => {
+    try {
+      const tx = db.transaction(store, 'readonly');
+      const r = tx.objectStore(store).getAll();
+      r.onsuccess = () => res(r.result || []);
+      r.onerror = () => res([]);
+    } catch { res([]); }
+  })).catch(() => []);
+}
+function idbDel(store, key) {
+  return openDB().then(db => new Promise((res) => {
+    try {
+      const tx = db.transaction(store, 'readwrite');
+      tx.objectStore(store).delete(key);
+      tx.oncomplete = () => res(true);
+      tx.onerror = () => res(false);
+    } catch { res(false); }
+  })).catch(() => false);
+}
+
 export function saveState(state) {
-  try {
-    const saved = state ? { ...state, savedAt: Date.now() } : state;
-    localStorage.setItem(`bl-save:${state.seed}`, JSON.stringify(saved));
-  } catch (e) { /* ignore */ }
+  if (!state) return;
+  const saved = { ...state, savedAt: Date.now() };
+  try { localStorage.setItem(`bl-save:${state.seed}`, JSON.stringify(saved)); } catch (e) { /* ignore */ }
+  // 异步写 IndexedDB（file:// 下更可靠）
+  try { idbPut('saves', saved); } catch (e) { /* ignore */ }
+}
+
+// 等待 IndexedDB 写完成后再返回（关键节点用，避免关闭页面丢失）
+export async function saveStateAsync(state) {
+  if (!state) return false;
+  const saved = { ...state, savedAt: Date.now() };
+  let ok = false;
+  try { localStorage.setItem(`bl-save:${state.seed}`, JSON.stringify(saved)); ok = true; } catch (e) { /* ignore */ }
+  try { ok = await idbPut('saves', saved) || ok; } catch (e) { /* ignore */ }
+  return ok;
 }
 
 export function loadState(seed) {
@@ -3661,6 +3733,13 @@ export function loadState(seed) {
     const raw = localStorage.getItem(`bl-save:${seed}`);
     return raw ? JSON.parse(raw) : null;
   } catch (e) { return null; }
+}
+
+// 优先从 IndexedDB 读取（localStorage 可能因 file:// 丢失）
+export async function loadStateAsync(seed) {
+  const fromDb = await idbGet('saves', seed);
+  if (fromDb) return fromDb;
+  return loadState(seed);
 }
 
 export function listSaves() {
@@ -3672,26 +3751,50 @@ export function listSaves() {
       let st = null;
       try { st = JSON.parse(localStorage.getItem(k)); } catch (e) { continue; }
       if (!st) continue;
-      list.push({
-        seed,
-        name: (st.player && st.player.name) || '未命名',
-        age: (st.player && st.player.age) || 0,
-        overall: (st.player && st.player.overall) || 0,
-        teamId: st.currentTeamId || null,
-        stage: st.stage || st.phase || '',
-        season: st.season ? `${st.season.played}/${st.season.totalGames}` : '',
-        savedAt: st.savedAt || 0,
-      });
+      list.push(saveSummary(st, seed));
     }
     return list.sort((a, b) => b.savedAt - a.savedAt);
   } catch (e) { return []; }
 }
 
-export function clearState(seed) {
-  try { localStorage.removeItem(`bl-save:${seed}`); } catch (e) { /* ignore */ }
+// 异步列出存档（IndexedDB + localStorage 合并去重，IndexedDB 优先）
+export async function listSavesAsync() {
+  const fromDb = await idbGetAll('saves');
+  const map = new Map();
+  for (const st of fromDb) {
+    if (st && st.seed) map.set(st.seed, saveSummary(st, st.seed));
+  }
+  // 合并 localStorage（可能含 IndexedDB 没有的）
+  const fromLs = listSaves();
+  for (const s of fromLs) if (!map.has(s.seed)) map.set(s.seed, s);
+  return Array.from(map.values()).sort((a, b) => b.savedAt - a.savedAt);
 }
 
-export function saveArchive(summary) {
+function saveSummary(st, seed) {
+  return {
+    seed,
+    name: (st.player && st.player.name) || '未命名',
+    age: (st.player && st.player.age) || 0,
+    overall: (st.player && st.player.overall) || 0,
+    teamId: st.currentTeamId || null,
+    stage: st.stage || st.phase || '',
+    season: st.season ? `${st.season.played}/${st.season.totalGames}` : '',
+    savedAt: st.savedAt || 0,
+  };
+}
+
+export function clearState(seed) {
+  try { localStorage.removeItem(`bl-save:${seed}`); } catch (e) { /* ignore */ }
+  try { idbDel('saves', seed); } catch (e) { /* ignore */ }
+}
+
+export async function clearStateAsync(seed) {
+  try { localStorage.removeItem(`bl-save:${seed}`); } catch (e) { /* ignore */ }
+  try { await idbDel('saves', seed); } catch (e) { /* ignore */ }
+}
+
+export async function saveArchive(summary) {
+  if (!summary) return;
   try {
     const key = 'bl-archive';
     const list = JSON.parse(localStorage.getItem(key) || '[]');
@@ -3701,23 +3804,45 @@ export function saveArchive(summary) {
     for (const it of list) {
       if (!seen.has(it.seed)) { seen.add(it.seed); dedup.push(it); }
     }
-    localStorage.setItem(key, JSON.stringify(dedup.slice(0, 50)));
+    const trimmed = dedup.slice(0, 50);
+    localStorage.setItem(key, JSON.stringify(trimmed));
+    // IndexedDB 兜底
+    await idbPut('archive', summary);
   } catch (e) { /* ignore */ }
 }
 
-export function loadArchive() {
+// 同步读取归档（用于档案页/图鉴渲染，localStorage 兜底）
+export function loadArchiveSync() {
   try {
     return JSON.parse(localStorage.getItem('bl-archive') || '[]');
   } catch (e) { return []; }
 }
 
+export async function loadArchive() {
+  try {
+    const ls = JSON.parse(localStorage.getItem('bl-archive') || '[]');
+    const dbList = await idbGetAll('archive');
+    const map = new Map();
+    for (const a of dbList) if (a && a.seed) map.set(a.seed, a);
+    for (const a of ls) if (a && a.seed) map.set(a.seed, a);
+    const list = Array.from(map.values());
+    list.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
+    return list.slice(0, 50);
+  } catch (e) { return []; }
+}
+
 export function galleryState() {
-  const archive = loadArchive();
-  const unlocked = new Map();
-  for (const a of archive) {
-    for (const t of (a.titles || [])) {
-      if (!unlocked.has(t.id)) unlocked.set(t.id, t.quote);
+  // gallery 保持同步读取 localStorage（存档归档提示用），异步数据由调用处处理
+  try {
+    const archive = JSON.parse(localStorage.getItem('bl-archive') || '[]');
+    const unlocked = new Map();
+    for (const a of archive) {
+      for (const t of (a.titles || [])) {
+        if (!unlocked.has(t.id)) unlocked.set(t.id, t.quote);
+      }
     }
+    return { unlocked, total: TITLES.length };
+  } catch (e) {
+    return { unlocked: new Map(), total: TITLES.length };
   }
-  return { unlocked, total: TITLES.length };
 }

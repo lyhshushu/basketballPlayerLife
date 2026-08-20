@@ -133,8 +133,8 @@ function topbarHTML() {
 
 // ---------- 首页 ----------
 function homeHTML() {
-  const archive = E.loadArchive();
-  const saves = E.listSaves();
+  const archive = app.homeArchive || [];
+  const saves = app.homeSaves || [];
   const modeCards = Object.entries(MODES).map(([key, m]) => `
     <button class="mode-card ${app.mode === key ? 'active' : ''}" onclick="BL.setMode('${key}')">
       ${m.recommended ? '<span class="rec">推荐</span>' : ''}
@@ -195,6 +195,14 @@ function homeHTML() {
 }
 
 // ---------- 建档 ----------
+function refreshHome() {
+  Promise.all([E.listSavesAsync(), E.loadArchive()]).then(([saves, archive]) => {
+    app.homeSaves = saves;
+    app.homeArchive = archive;
+    if (app.view === 'home') render();
+  }).catch(() => {});
+}
+
 function identityHTML() {
   const id = app.identity;
   const country = COUNTRIES[id.nationality];
@@ -940,7 +948,7 @@ function trophyMeta(id) {
 
 // ---------- 档案 / 图鉴 ----------
 function archiveHTML() {
-  const list = E.loadArchive();
+  const list = E.loadArchiveSync();
   return shell(`
     <div class="page-head">
       <button class="btn btn-ghost" onclick="BL.backHome()">← 返回</button>
@@ -1632,7 +1640,13 @@ function render() {
   const scrollEl = document.querySelector('.app > .scroll');
   const prevScroll = scrollEl ? scrollEl.scrollTop : 0;
   const prevView = app.view;
-  if (app.view === 'home') root.innerHTML = homeHTML();
+  if (app.view === 'home') {
+    root.innerHTML = homeHTML();
+    if (!app.homeSavesLoaded) {
+      app.homeSavesLoaded = true;
+      refreshHome();
+    }
+  }
   else if (app.view === 'identity') root.innerHTML = identityHTML();
   else if (app.view === 'build') root.innerHTML = buildHTML();
   else if (app.view === 'game') root.innerHTML = gameHTML();
@@ -1660,15 +1674,15 @@ window.BL = {
     app.view = 'identity';
     render();
   },
-  resume(seed) {
+  async resume(seed) {
     if (seed) app.seed = seed;
     if (!app.seed) {
       // 找最近一次的存档
-      const saves = E.listSaves();
+      const saves = await E.listSavesAsync();
       if (saves.length) app.seed = saves[0].seed;
     }
     if (!app.seed) { toast('没有可继续的存档'); return; }
-    const st = E.loadState(app.seed);
+    const st = await E.loadStateAsync(app.seed);
     if (!st) { toast('存档已清理'); return; }
     app.state = st;
     app.archived = false;
@@ -1698,11 +1712,12 @@ window.BL = {
     }
     render();
   },
-  backHome() { app.view = 'home'; app.modal = null; render(); },
-  deleteSave(seed) {
+  backHome() { app.view = 'home'; app.modal = null; app.homeSavesLoaded = false; render(); },
+  async deleteSave(seed) {
     if (!seed) return;
-    E.clearState(seed);
+    await E.clearStateAsync(seed);
     toast('已删除存档');
+    app.homeSavesLoaded = false;
     render();
   },
   openArchive() { app.view = 'archive'; render(); },
@@ -1710,11 +1725,11 @@ window.BL = {
   openUpdates() { app.modal = { type: 'updates' }; render(); },
   closeModal() { app.modal = null; render(); },
   setInvite(v) { app.invite = v; },
-  useInvite() {
+  async useInvite() {
     const code = app.invite.trim();
     if (!code) { toast('输入一个编号'); return; }
     app.seed = code;
-    const st = E.loadState(code);
+    const st = await E.loadStateAsync(code);
     if (st) {
       app.state = st;
       app.archived = false;
@@ -1995,7 +2010,7 @@ window.BL = {
     E.saveState(st);
     render();
   },
-  finishGame() {
+  async finishGame() {
     if (app.gameTimer) { clearInterval(app.gameTimer); app.gameTimer = null; }
     const st = app.state;
     const g = app.game;
@@ -2024,13 +2039,13 @@ window.BL = {
         }
         app.game = null; app.gameView = null; app.gameCtx = null;
         app.view = 'offseason';
-        E.saveState(st);
+        await E.saveStateAsync(st);
         render();
         return;
       } else {
         E.applyGameResult(st, g);
       }
-      E.saveState(st);
+      await E.saveStateAsync(st);
     }
     app.game = null;
     app.gameView = null;
@@ -2076,7 +2091,7 @@ window.BL = {
     E.saveState(state);
     render();
   },
-  dismissSeasonSummary() {
+  async dismissSeasonSummary() {
     // 赛季总结关闭后：休赛期（国家队比赛 + 交易 + 退役 + 新秀）
     if (app.state && app.state.currentTeamId && !app.state.season) {
       const trades = E.seasonOffseason(app.state);
@@ -2090,14 +2105,14 @@ window.BL = {
       if (hasContent) {
         app.view = 'offseason';
         app.seasonSummary = null;
-        E.saveState(app.state);
+        await E.saveStateAsync(app.state);
         toast('📁 本赛季进度已保存');
         render();
         return;
       }
     }
     app.seasonSummary = null;
-    E.saveState(app.state);
+    await E.saveStateAsync(app.state);
     toast('📁 本赛季进度已保存');
     render();
   },
@@ -2436,7 +2451,7 @@ window.BL = {
     a.click();
   },
   viewArchive(i) {
-    const list = E.loadArchive();
+    const list = E.loadArchiveSync();
     app.archiveDetail = list[i];
     app.view = 'archive-detail';
     render();
@@ -2552,3 +2567,17 @@ window.__testState = () => ({
   eventOptions: app.state && app.state.currentEvent ? app.state.currentEvent.options.length : 0,
   lastOutcome: app.state && app.state.lastEventOutcome ? app.state.lastEventOutcome.text : null,
 });
+
+// 兜底保存：页面切后台/关闭时尽力写入 IndexedDB，避免进度丢失
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden' && app.state && app.state.seed) {
+      E.saveStateAsync(app.state);
+    }
+  });
+  window.addEventListener('pagehide', () => {
+    if (app.state && app.state.seed) {
+      E.saveState(app.state);
+    }
+  });
+}
